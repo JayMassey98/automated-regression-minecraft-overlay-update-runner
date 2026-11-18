@@ -1,0 +1,49 @@
+# Offline checks for ARMOUR's scripts and docs (no Minecraft server required).
+name: Self-test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - automated_testing
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+
+      # Check out repository files.
+      - uses: actions/checkout@v7
+  
+      # Check GitHub Actions workflow syntax and rules.
+      - uses: raven-actions/actionlint@v2.2.0
+
+      # Check JavaScript and JSON syntax and rules.
+      - uses: biomejs/setup-biome@v2.7.1
+        with:
+          version: latest
+      - run: biome check scripts/
+
+      # Check Markdown syntax and rules.
+      - uses: DavidAnson/markdownlint-cli2-action@v25
+        with:
+          globs: README.md
+
+      # Check Python syntax and rules.
+      - uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "latest"
+          args: check
+      - uses: astral-sh/ruff-action@v4.1.0
+        with:
+          version: "latest"
+          args: format --check
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: python3 -m unittest discover -s tests -v

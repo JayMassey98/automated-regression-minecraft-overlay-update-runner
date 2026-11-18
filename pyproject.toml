@@ -1,0 +1,92 @@
+# Tool settings only: ARMOUR's scripts are run directly, not installed.
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+# Scripts import each other, and the tests import the scripts, by bare module name.
+src = ["scripts", "tests"]
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+    "A",    # builtins shadowed by names
+    "ANN",  # type annotations
+    "ARG",  # unused arguments
+    "B",    # likely bugs (flake8-bugbear)
+    "BLE",  # blind `except Exception`
+    "C4",   # comprehensions
+    "C90",  # function complexity
+    "D",    # docstrings
+    "DTZ",  # naive datetimes
+    "E",    # pycodestyle errors
+    "ERA",  # commented-out code
+    "EXE",  # shebangs and executable bits
+    "F",    # pyflakes
+    "FA",   # `from __future__ import annotations`
+    "FBT",  # boolean traps
+    "FURB", # modern idioms
+    "I",    # import order
+    "ISC",  # implicit string concatenation
+    "N",    # naming
+    "PERF", # performance
+    "PGH",  # pygrep hooks
+    "PIE",  # misc. cleanups
+    "PL",   # pylint
+    "PTH",  # pathlib over os.path
+    "RET",  # return statements
+    "RSE",  # redundant raise parentheses
+    "RUF",  # ruff's own rules
+    "S",    # security (bandit)
+    "SIM",  # simplifications
+    "SLF",  # private member access
+    "T10",  # leftover debugger calls
+    "TC",   # typing-only imports
+    "TID",  # tidy imports
+    "TRY",  # exception handling
+    "UP",   # modernise for the target Python
+    "W",    # pycodestyle warnings
+    "YTT",  # sys.version checks
+]
+ignore = [
+    "EM",     # (not selected) exception messages are kept inline for readability
+    "INP001", # scripts/ and tests/ are plain folders, not packages
+    "ISC001", # conflicts with the formatter
+    "TRY003", # long messages in exceptions are fine for a CLI tool
+]
+
+[tool.ruff.lint.isort]
+# `support` puts scripts/ on the import path, so it must come before the scripts.
+section-order = [
+    "future",
+    "standard-library",
+    "bootstrap",
+    "third-party",
+    "first-party",
+    "local-folder",
+]
+
+[tool.ruff.lint.isort.sections]
+bootstrap = ["support"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D",       # test names say what they check
+    "PLR2004", # literal numbers are what tests assert
+    "S101",    # asserts are what tests do
+    "S603",    # tests run this repo's own scripts
+    "SLF001",  # tests may reach into private helpers
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "scripts:tests"
+files = ["scripts", "tests"]

@@ -1,0 +1,503 @@
+#!/usr/bin/env python3
+"""Run a data pack's tests on a real, headless Minecraft server.
+
+Steps:
+  1. Download the version's server.jar (checked against its SHA-1, cached).
+  2. Stage the data pack (with its real pack.mcmeta overlays) and the tests
+     pack into a fresh world. Only `max_format` is widened, so snapshots whose
+     pack format is newer than the declared one still load.
+  3. Start the server, run `/function <tests namespace>:harness/start`, and
+     read the ET_* result lines the tests print to the server log.
+  4. Stop the server and report. Fails when a test fails, when any pack file
+     logs a load error (broken recipe, tag, function...), or when no result
+     arrives.
+
+Exit codes: 0 = all tests passed, 1 = failures or problems.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import queue
+import re
+import shutil
+import subprocess
+import threading
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import armour_config
+from armour_common import (
+    ArmourError,
+    annotate,
+    append_summary,
+    download_server_jar,
+    run,
+)
+from build_version_pack import load_mcmeta, overlay_entries
+from generate_test_runner import generate
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+    from typing import TextIO
+
+WIDE_MAX_FORMAT = [9999, 0]
+
+JAVA_HEAP = "-Xmx2G"
+SERVER_PORT = 25599
+SERVER_STOP_TIMEOUT_SECONDS = 90
+READER_JOIN_TIMEOUT_SECONDS = 10
+# Pauses that let the log catch up: after `datapack list`, and after the result.
+DIAGNOSTIC_PAUSE_SECONDS = 3
+FLUSH_PAUSE_SECONDS = 2
+SERVER_PROPERTIES = f"""\
+online-mode=false
+enforce-secure-profile=false
+spawn-protection=0
+spawn-monsters=false
+spawn-animals=false
+spawn-npcs=false
+allow-nether=false
+generate-structures=false
+view-distance=4
+simulation-distance=4
+max-players=1
+max-tick-time=-1
+pause-when-empty-seconds=-1
+sync-chunk-writes=false
+enable-rcon=false
+enable-query=false
+server-port={SERVER_PORT}
+initial-enabled-packs=vanilla,file/{{pack_name}},file/{{tests_namespace}}
+"""
+
+# A line like "[12:00:00] [Server thread/ERROR]: ..." (we then check it mentions
+# one of the packs).
+LOG_LEVEL_RE = re.compile(r"/(ERROR|WARN|FATAL)\]")
+# The start of a new log record, such as "[12:00:00] [Server thread/INFO]: ...".
+LOG_RECORD_RE = re.compile(r"^\[\d\d:\d\d:\d\d\]")
+# How many lines after a load error can hold its reason (the command that did
+# not parse).
+LOAD_ERROR_DETAIL_LINES = 8
+MAX_LOAD_WARNINGS_SHOWN = 20
+LOG_TAIL_LINES = 60
+
+# Files every tests pack must have. If they are missing, the tests folder was not
+# fully updated.
+REQUIRED_TEST_FILES = (
+    "harness/start.mcfunction",
+    "harness/run.mcfunction",
+    "harness/fail.mcfunction",
+    "harness/end_test.mcfunction",
+    "assert/block.mcfunction",
+)
+# Left over from the earlier vanilla GameTest attempt. They are not used and would
+# only add load errors.
+LEGACY_GAMETEST_FOLDERS = ("test_instance", "test_environment", "structure")
+
+
+# =============================================================================
+# Staging
+# =============================================================================
+
+
+def widen_max_format(mcmeta_path: Path) -> None:
+    """Let a snapshot whose pack format is newer than max_format still load."""
+    data = json.loads(mcmeta_path.read_text(encoding="utf-8"))
+    if not isinstance(data.get("pack"), dict):
+        msg = f'{mcmeta_path} has no "pack" section'
+        raise ArmourError(msg)
+    data["pack"]["max_format"] = WIDE_MAX_FORMAT
+    mcmeta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
+    """Copy the shipped pack: pack.mcmeta, data/, and every overlay folder.
+
+    Released versions are tested with pack.mcmeta exactly as shipped. Only
+    snapshots (whose pack format can be newer than max_format) get a widened
+    max_format.
+    """
+    entries = overlay_entries(load_mcmeta(repo))
+    destination.mkdir(parents=True)
+    shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
+    shutil.copytree(repo / "data", destination / "data")
+    for entry in entries:
+        directory = entry["directory"]
+        if not (repo / directory).is_dir():
+            msg = (
+                f"pack.mcmeta lists overlay '{directory}' "
+                f"but {repo / directory} does not exist"
+            )
+            raise ArmourError(msg)
+        shutil.copytree(repo / directory, destination / directory)
+    if widen:
+        widen_max_format(destination / "pack.mcmeta")
+
+
+def stage_tests_pack(tests: Path, destination: Path, namespace: str) -> int:
+    """Copy the tests pack, regenerate its runner and return how many tests it has."""
+    function_dir = tests / "data" / namespace / "function"
+    missing = [
+        name for name in REQUIRED_TEST_FILES if not (function_dir / name).is_file()
+    ]
+    if missing:
+        msg = (
+            f"The tests folder is missing {', '.join(missing)}. Copy the whole "
+            "tests/ folder from the test harness zip into the repo, then try again."
+        )
+        raise ArmourError(msg)
+    shutil.copytree(
+        tests, destination, ignore=shutil.ignore_patterns(*LEGACY_GAMETEST_FOLDERS)
+    )
+    count = generate(destination, namespace)  # never run a stale test list
+    widen_max_format(destination / "pack.mcmeta")
+    return count
+
+
+def write_server_files(work: Path, pack_name: str, tests_namespace: str) -> None:
+    """Accept the EULA and write server.properties for the test server."""
+    (work / "eula.txt").write_text("eula=true\n", encoding="utf-8")
+    (work / "server.properties").write_text(
+        SERVER_PROPERTIES.format(pack_name=pack_name, tests_namespace=tests_namespace),
+        encoding="utf-8",
+    )
+
+
+# =============================================================================
+# Server Running
+# =============================================================================
+
+
+class Server:
+    """A running server with a reader thread, so waiting never blocks forever."""
+
+    def __init__(self, process: subprocess.Popen[str], log_file: TextIO) -> None:
+        """Start reading `process`'s output into `log_file` and a line queue."""
+        if process.stdin is None or process.stdout is None:
+            msg = "the server process needs stdin and stdout pipes"
+            raise ValueError(msg)
+        self._process = process
+        self._stdin = process.stdin
+        self._stdout = process.stdout
+        self._log_file = log_file
+        self._stopped = False
+        self._lines: queue.Queue[str | None] = queue.Queue()
+        self._reader = threading.Thread(target=self._read, daemon=True)
+        self._reader.start()
+
+    def _read(self) -> None:
+        for raw in self._stdout:
+            line = raw.rstrip("\n")
+            self._log_file.write(line + "\n")
+            self._log_file.flush()
+            self._lines.put(line)
+        self._lines.put(None)  # the server closed its output
+
+    def send(self, command: str) -> None:
+        """Type a command into the server console (ignored if it already exited)."""
+        with contextlib.suppress(OSError):
+            self._stdin.write(command + "\n")
+            self._stdin.flush()
+
+    def wait_for(
+        self, marker: str | None, timeout: float, collected: list[str]
+    ) -> str | None:
+        """Collect lines until one contains `marker`, and return that line.
+
+        Returns None on timeout or when the server exits. With `marker=None`
+        this simply collects output for `timeout` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return None
+            try:
+                line = self._lines.get(timeout=min(remaining, 1.0))
+            except queue.Empty:
+                continue
+            if line is None:
+                return None
+            collected.append(line)
+            if marker is not None and marker in line:
+                return line
+
+    def stop(self) -> None:
+        """Stop the server (killing it if it ignores `stop`) and finish logging.
+
+        Safe to call more than once.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+        self.send("stop")
+        try:
+            self._process.wait(timeout=SERVER_STOP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait()
+        # Closing flushes anything unsent, which fails once the server has gone.
+        with contextlib.suppress(OSError):
+            self._stdin.close()
+        self._reader.join(timeout=READER_JOIN_TIMEOUT_SECONDS)
+
+    def drain(self) -> list[str]:
+        """Return the lines that arrived but have not been collected yet."""
+        remaining: list[str] = []
+        while True:
+            try:
+                line = self._lines.get_nowait()
+            except queue.Empty:
+                return remaining
+            if line is not None:
+                remaining.append(line)
+
+
+@contextlib.contextmanager
+def launch_server(
+    command: Sequence[str], cwd: Path, log_path: Path
+) -> Iterator[Server]:
+    """Start the server, copy its output to `log_path`, and stop it on exit."""
+    with (
+        log_path.open("w", encoding="utf-8") as log_file,
+        subprocess.Popen(  # noqa: S603 - the command comes from this script's own arguments
+            command,
+            cwd=cwd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            encoding="utf-8",
+            errors="replace",
+        ) as process,
+    ):
+        server = Server(process, log_file)
+        try:
+            yield server
+        finally:
+            server.stop()
+
+
+def run_tests_on_server(
+    command: Sequence[str],
+    work: Path,
+    start_command: str,
+    *,
+    startup_timeout: float,
+    test_timeout: float,
+) -> tuple[list[str], str | None]:
+    """Run the harness and return (server log lines, a problem description or None)."""
+    lines: list[str] = []
+    problem = None
+    with launch_server(command, work, work / "server-output.log") as server:
+        if server.wait_for("Done (", startup_timeout, lines) is None:
+            problem = "The server did not finish starting"
+        else:
+            server.send(start_command)
+            if server.wait_for("ET_RESULT", test_timeout, lines) is None:
+                problem = "The tests did not report a result (see the server log below)"
+                # Show which data packs the server has enabled, to help diagnose.
+                server.send("datapack list")
+                server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
+            # Give the log a moment to flush anything printed after the result.
+            server.wait_for(None, FLUSH_PAUSE_SECONDS, lines)
+        # Anything the server prints while stopping can still hold load errors.
+        server.stop()
+        lines.extend(server.drain())
+    return lines, problem
+
+
+# =============================================================================
+# Log Analysis
+# =============================================================================
+
+
+@dataclass
+class Analysis:
+    """What the server log says about the test run."""
+
+    fails: list[str] = field(default_factory=list)
+    skips: int = 0
+    counts: str | None = None
+    result: str | None = None
+    errors: list[str] = field(default_factory=list)
+    load_errors: list[str] = field(default_factory=list)
+    load_warnings: list[str] = field(default_factory=list)
+    diag: list[str] = field(default_factory=list)
+
+
+def _after(line: str, marker: str) -> str:
+    return line.split(marker, 1)[1].strip()
+
+
+def _record_harness_line(found: Analysis, line: str) -> bool:
+    """File an `ET_*` line from the test harness; False if it is not one."""
+    if "ET_FAIL " in line:
+        found.fails.append(_after(line, "ET_FAIL "))
+    elif "ET_SKIP " in line:
+        found.skips += 1
+    elif "ET_COUNTS " in line:
+        found.counts = _after(line, "ET_COUNTS ")
+    elif "ET_RESULT " in line:
+        found.result = _after(line, "ET_RESULT ")
+    elif "ET_DIAG " in line:
+        found.diag.append(_after(line, "ET_DIAG "))
+    elif "ET_ERROR " in line:
+        found.errors.append(_after(line, "ET_ERROR "))
+    else:
+        return False
+    return True
+
+
+def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> None:
+    """File the log line at `index` if it is an error or warning."""
+    line = lines[index]
+    level = LOG_LEVEL_RE.search(line)
+    if level is None:
+        return
+    if level.group(1) == "WARN":
+        found.load_warnings.append(line)
+        return
+    # The reason (the exact command that did not parse) is on the lines after this one.
+    detail = []
+    for following in lines[index + 1 : index + 1 + LOAD_ERROR_DETAIL_LINES]:
+        if LOG_RECORD_RE.match(following):
+            break
+        detail.append(following.strip())
+    found.load_errors.append("\n".join([line, *filter(None, detail)]))
+
+
+def analyse(lines: Sequence[str], pack_names: Sequence[str]) -> Analysis:
+    """Sort the log's ET_* lines and any errors mentioning our packs."""
+    found = Analysis()
+    for index, line in enumerate(lines):
+        if _record_harness_line(found, line):
+            continue
+        if any(name in line for name in pack_names):
+            _record_pack_problem(found, lines, index)
+    return found
+
+
+def report(
+    version: str, found: Analysis, problem: str | None, lines: list[str]
+) -> bool:
+    """Print annotations and the summary; return True when everything passed."""
+    for warning in found.load_warnings[:MAX_LOAD_WARNINGS_SHOWN]:
+        annotate("warning", f"Pack log warning ({version})", warning)
+    for error in found.load_errors:
+        annotate("error", f"Pack failed to load ({version})", error)
+    for error in found.errors:
+        annotate("error", f"Test harness ({version})", error)
+    if found.diag:
+        print("---- diagnostics ----")
+        for entry in found.diag:
+            print(f"ET_DIAG {entry}")
+        print("---- end diagnostics ----")
+    for failure in found.fails:
+        annotate("error", f"Test failed ({version})", failure)
+
+    ok = (
+        problem is None
+        and found.result == "PASSED"
+        and not found.fails
+        and not found.load_errors
+        and not found.errors
+    )
+    totals = found.counts or "no totals reported"
+    status = "🟢 passed" if ok else "🔴 failed"
+    append_summary(
+        f"{status} `{version}`: {totals}, {len(found.load_errors)} pack load errors"
+    )
+
+    if problem:
+        annotate("error", f"Server test run ({version})", problem)
+        print(f"---- last {LOG_TAIL_LINES} server log lines ----")
+        print("\n".join(lines[-LOG_TAIL_LINES:]))
+    print(
+        f"Minecraft {version}: {totals}; result={found.result}; "
+        f"{len(found.fails)} failures; {len(found.load_errors)} pack load errors"
+    )
+    return ok
+
+
+# =============================================================================
+# Command Line
+# =============================================================================
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse the command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawTextHelpFormatter
+    )
+    parser.add_argument(
+        "--version", required=True, help="Minecraft version id, for messages"
+    )
+    parser.add_argument(
+        "--kind",
+        choices=["release", "snapshot"],
+        default="release",
+        help="snapshots get a widened max_format; releases are tested as shipped",
+    )
+    parser.add_argument("--server-url", required=True)
+    parser.add_argument("--sha1", required=True)
+    parser.add_argument("--cache-dir", default=".mc-cache")
+    parser.add_argument("--repo", default=".")
+    parser.add_argument("--tests-dir", default="tests")
+    parser.add_argument("--work-dir", default="server-run")
+    parser.add_argument("--java", default="java")
+    parser.add_argument("--startup-timeout", type=float, default=300)
+    parser.add_argument("--test-timeout", type=float, default=180)
+    parser.add_argument(
+        "--server-jar", help="testing only: use this jar instead of downloading"
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Command-line entry point."""
+    args = parse_args(argv)
+
+    repo = Path(args.repo).resolve()
+    config = armour_config.load(repo)
+    work = Path(args.work_dir).resolve()
+    if work.exists():
+        shutil.rmtree(work)
+    datapacks = work / "world" / "datapacks"
+    datapacks.mkdir(parents=True)
+
+    jar = (
+        Path(args.server_jar)
+        if args.server_jar
+        else download_server_jar(
+            args.server_url, args.sha1, Path(args.cache_dir).resolve()
+        )
+    )
+    stage_data_pack(repo, datapacks / config.pack_name, widen=args.kind == "snapshot")
+    test_count = stage_tests_pack(
+        Path(args.tests_dir).resolve(),
+        datapacks / config.tests_namespace,
+        config.tests_namespace,
+    )
+    write_server_files(work, config.pack_name, config.tests_namespace)
+    print(f"Staged the data pack and {test_count} tests for Minecraft {args.version}")
+
+    lines, problem = run_tests_on_server(
+        [args.java, JAVA_HEAP, "-jar", str(jar), "nogui"],
+        work,
+        config.start_command,
+        startup_timeout=args.startup_timeout,
+        test_timeout=args.test_timeout,
+    )
+    found = analyse(lines, (config.pack_name, config.tests_namespace))
+    return 0 if report(args.version, found, problem, lines) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(main))
