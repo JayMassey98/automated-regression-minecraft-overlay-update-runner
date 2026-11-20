@@ -151,15 +151,22 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
         low = as_format(entry["min_format"], upper=False)
     if "max_format" in entry:
         high = as_format(entry["max_format"], upper=True)
-    legacy = entry.get("formats")  # 1.20.2 - 1.21.8 style
-    if legacy is None:
-        if low > high:
-            raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
+    if "formats" in entry and ("min_format" in entry or "max_format" in entry):
+        raise ArmourError(
+            "Overlay entry must use either legacy 'formats' or modern "
+            "min_format/max_format bounds, not both"
+        )
+    if low > high:
+        raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
+    if "formats" not in entry:
         return low, high
+    legacy = entry["formats"]  # 1.20.2 - 1.21.8 style
+    if legacy is None:
+        raise ArmourError(f"Overlay formats must not be null: {entry!r}")
     if isinstance(legacy, int) and not isinstance(legacy, bool):
         value = _format_number(legacy)
-        return (value, 0), (value, MINOR_INFINITY)
-    if isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
+        legacy_low, legacy_high = (value, 0), (value, MINOR_INFINITY)
+    elif isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
         legacy_low = (_format_number(legacy[0]), 0)
         legacy_high = (_format_number(legacy[1]), MINOR_INFINITY)
     elif isinstance(legacy, dict):
