@@ -1,10 +1,58 @@
-# Run the same lint checks as .github/workflows/self-test.yml locally.
-# Each check is independent: missing tools fail only their own step; remaining checks still run.
+# Run the CI lint checks locally. With -Install, install or upgrade the tools first.
+# rumdl is a local Markdown-lint substitute for CI's markdownlint-cli2, not the same tool.
 [CmdletBinding()]
-param()
+param(
+    [switch]$Install
+)
 
 $ErrorActionPreference = "Continue"
 $script:Failures = 0
+
+$ToolPackages = @(
+    @{ Name = "actionlint"; Id = "rhysd.actionlint"; Command = "actionlint" },
+    @{ Name = "Biome"; Id = "BiomeJS.Biome"; Command = "biome" },
+    @{ Name = "Ruff"; Id = "astral-sh.ruff"; Command = "ruff" },
+    @{ Name = "rumdl (local markdownlint-cli2 substitute)"; Id = "rvben.rumdl"; Command = "rumdl" }
+)
+
+function Invoke-InstallOrUpgrade {
+    param([Parameter(Mandatory = $true)]$Package)
+
+    Write-Host ""
+    Write-Host "===== Install/update $($Package.Name) =====" -ForegroundColor Cyan
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Host "FAIL: WinGet is unavailable; cannot install $($Package.Name)." -ForegroundColor Red
+        $script:Failures++
+        return
+    }
+
+    # Use WinGet's installed-package listing to choose install vs upgrade.
+    $listing = & winget list --id $Package.Id --exact --accept-source-agreements 2>&1
+    $listExit = $LASTEXITCODE
+    $isInstalled = ($listExit -eq 0) -and (($listing | Out-String) -match [regex]::Escape($Package.Id))
+
+    if ($isInstalled) {
+        Write-Host "Updating $($Package.Name) to latest available..." 
+        & winget upgrade --id $Package.Id --exact --silent --accept-package-agreements --accept-source-agreements
+        $result = $LASTEXITCODE
+        if ($result -ne 0) {
+            Write-Host "FAIL: Upgrade attempt for $($Package.Name) failed (exit $result)." -ForegroundColor Red
+            $script:Failures++
+        } else {
+            Write-Host "Install/update command completed for $($Package.Name)." -ForegroundColor Green
+        }
+    } else {
+        Write-Host "Installing $($Package.Name)..." 
+        & winget install --id $Package.Id --exact --silent --accept-package-agreements --accept-source-agreements
+        $result = $LASTEXITCODE
+        if ($result -ne 0) {
+            Write-Host "FAIL: Install attempt for $($Package.Name) failed (exit $result)." -ForegroundColor Red
+            $script:Failures++
+        } else {
+            Write-Host "Installed $($Package.Name)." -ForegroundColor Green
+        }
+    }
+}
 
 function Invoke-LintStep {
     param(
@@ -18,15 +66,16 @@ function Invoke-LintStep {
     $command = Get-Command $Tool -ErrorAction SilentlyContinue
     if (-not $command) {
         Write-Host "FAIL: Required tool '$Tool' is not installed or not on PATH." -ForegroundColor Red
-        Write-Host "Install the latest version, then rerun this script. This check is skipped; other checks continue."
+        Write-Host "Install it (or rerun with -Install). This check is skipped; remaining checks continue."
         $script:Failures++
         return
     }
 
     try {
         & $command.Source @Arguments
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "FAIL: $Name (exit code $LASTEXITCODE)" -ForegroundColor Red
+        $result = $LASTEXITCODE
+        if ($result -ne 0) {
+            Write-Host "FAIL: $Name (exit code $result)" -ForegroundColor Red
             $script:Failures++
         } else {
             Write-Host "PASS: $Name" -ForegroundColor Green
@@ -37,21 +86,29 @@ function Invoke-LintStep {
     }
 }
 
-$root = $PSScriptRoot
-Push-Location $root
+Push-Location $PSScriptRoot
 try {
+    if ($Install) {
+        foreach ($package in $ToolPackages) {
+            Invoke-InstallOrUpgrade $package
+        }
+        Write-Host ""
+        Write-Host "Note: newly installed tools may not be visible to this PowerShell process if PATH changed. If a command is not found, reopen PowerShell and rerun without -Install." -ForegroundColor Yellow
+    }
+
     Invoke-LintStep "GitHub Actions workflow lint" "actionlint" @(".github/workflows/self-test.yml")
     Invoke-LintStep "Biome scripts check" "biome" @("check", "scripts/")
-    Invoke-LintStep "Markdown lint" "markdownlint-cli2" @("README.md")
+    Write-Host "NOTE: rumdl is a local Markdown-lint substitute for CI markdownlint-cli2." -ForegroundColor Yellow
+    Invoke-LintStep "Local Markdown lint (rumdl)" "rumdl" @("check", "README.md")
     Invoke-LintStep "Ruff lint" "ruff" @("check", ".")
     Invoke-LintStep "Ruff format verification" "ruff" @("format", "--check", ".")
 
     Write-Host ""
     if ($script:Failures -eq 0) {
-        Write-Host "ALL LINT CHECKS PASSED." -ForegroundColor Green
+        Write-Host "ALL LOCAL CHECKS PASSED." -ForegroundColor Green
         exit 0
     }
-    Write-Host "$script:Failures lint check(s) failed. See above; checks were run independently." -ForegroundColor Red
+    Write-Host "$script:Failures step(s) failed. See output; checks ran independently." -ForegroundColor Red
     exit 1
 } finally {
     Pop-Location
