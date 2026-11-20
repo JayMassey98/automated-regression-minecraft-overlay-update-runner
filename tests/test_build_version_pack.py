@@ -248,6 +248,30 @@ class MainTests(TempDirTestCase):
         )
         self.assertIn("94.1", summary.read_text(encoding="utf-8"))
 
+    def test_nested_pack_path_uses_repo_root_for_outputs_and_source_map(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "deep pack")
+        code, printed = self.run_main(
+            "--repo",
+            str(repo),
+            "--pack-path",
+            "packs/deep pack",
+            "--pack-version",
+            '{"data_major": 94, "data_minor": 1}',
+            "--out",
+            "build/flattened",
+            "--source-map",
+            "build/source-map.json",
+        )
+        self.assertEqual(code, 0, printed)
+        self.assertTrue((repo / "build/flattened/pack.mcmeta").is_file())
+        source_map = json.loads((repo / "build/source-map.json").read_text())
+        self.assertEqual(
+            source_map["data/p/function/new.mcfunction"],
+            "packs/deep pack/new/data/p/function/new.mcfunction",
+        )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
     def test_reads_the_format_from_a_downloaded_jar(self) -> None:
         repo = make_repo(self.tmp / "repo")
         jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
