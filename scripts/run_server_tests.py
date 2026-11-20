@@ -449,7 +449,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--sha1", required=True)
-    parser.add_argument("--cache-dir", default=".mc-cache")
+    parser.add_argument(
+        "--cache-dir", help="server JAR cache directory (defaults to a sibling)"
+    )
     parser.add_argument("--repo", default=".", help="consuming repository root")
     parser.add_argument(
         "--pack-path",
@@ -472,7 +474,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0915
     """Command-line entry point."""
     args = parse_args(argv)
 
@@ -498,14 +500,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         server_jar = repo / server_jar
     if server_jar is not None:
         server_jar = server_jar.resolve()
-    cache_dir = Path(args.cache_dir)
+    cache_dir = (
+        Path(args.cache_dir)
+        if args.cache_dir is not None
+        else repo.parent / f".{repo.name}-mc-cache"
+    )
     if not cache_dir.is_absolute():
         cache_dir = repo / cache_dir
     cache_dir = cache_dir.absolute()
     reject_symlink_components(cache_dir, Path(cache_dir.anchor))
     cache_dir = cache_dir.resolve()
     if paths_overlap(cache_dir, pack_root):
-        raise ArmourError(f"Cache directory must not overlap the source pack: {cache_dir}")
+        raise ArmourError(
+            f"Cache directory must not overlap the source pack: {cache_dir}"
+        )
     protected = (
         repo,
         pack_root,
