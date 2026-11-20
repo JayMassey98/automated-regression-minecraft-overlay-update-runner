@@ -40,7 +40,12 @@ from armour_common import (
     run,
 )
 from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
-from build_version_pack import load_mcmeta, overlay_entries
+from build_version_pack import (
+    load_mcmeta,
+    overlay_entries,
+    overlay_range,
+    validate_overlay_sources,
+)
 from generate_test_runner import generate
 
 if TYPE_CHECKING:
@@ -122,6 +127,9 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     max_format.
     """
     entries = overlay_entries(load_mcmeta(repo))
+    for entry in entries:
+        overlay_range(entry)
+    validate_overlay_sources(repo, entries)
     _reject_symlinks(repo)
     destination.mkdir(parents=True)
     shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
@@ -538,7 +546,22 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
         raise ArmourError(f"Tests directory does not exist: {tests_dir}")
     _reject_symlinks(pack_root)
     _reject_symlinks(tests_dir)
-    overlay_entries(load_mcmeta(pack_root))
+    if not (pack_root / "data").is_dir():
+        raise ArmourError(f"Data directory does not exist: {pack_root / 'data'}")
+    entries = overlay_entries(load_mcmeta(pack_root))
+    for entry in entries:
+        overlay_range(entry)
+    validate_overlay_sources(pack_root, entries)
+    tests_function_dir = tests_dir / "data" / config.tests_namespace / "function"
+    if not tests_function_dir.is_dir():
+        raise ArmourError(
+            f"Tests directory has no {tests_function_dir.relative_to(tests_dir)} folder"
+        )
+    if not (HARNESS_PACK_DIR / "pack.mcmeta").is_file():
+        raise ArmourError(
+            f"ARMOUR's harness pack is missing from {HARNESS_PACK_DIR}. "
+            "If ARMOUR is a submodule, run git submodule update --init."
+        )
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
