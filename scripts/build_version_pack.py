@@ -333,7 +333,9 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
         return result
 
 
-def validate_source_map_path(path: Path, repo: Path, pack_root: Path, out: Path) -> Path:
+def validate_source_map_path(
+    path: Path, repo: Path, pack_root: Path, out: Path
+) -> Path:
     """Validate and return a source-map destination without writing anything."""
     source_map = path if path.is_absolute() else repo / path
     source_map = source_map.absolute()
