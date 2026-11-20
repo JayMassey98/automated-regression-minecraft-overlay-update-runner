@@ -99,6 +99,17 @@ class FormatTests(TestCase):
             with self.subTest(entry):
                 self.assertEqual(build_version_pack.overlay_range(entry), expected)
 
+    def test_overlay_range_rejects_null_and_mixed_range_syntax(self) -> None:
+        invalid = [
+            {"formats": None},
+            {"formats": [80, 90], "min_format": 80},
+            {"formats": 80, "max_format": 90},
+            {"min_format": 90, "max_format": 80, "formats": [70, 100]},
+        ]
+        for entry in invalid:
+            with self.subTest(entry=entry), self.assertRaises(ArmourError):
+                build_version_pack.overlay_range(entry)
+
     def test_overlay_range_rejects_unknown_formats_value(self) -> None:
         with self.assertRaises(ArmourError):
             build_version_pack.overlay_range({"formats": "81"})
