@@ -333,18 +333,6 @@ class MainTests(TempDirTestCase):
             ])
         self.assertEqual(sentinel.read_text(), "safe")
 
-    def test_java_relative_path_is_resolved_from_repo(self) -> None:
-        repo = self.tmp / "repo"
-        repo.mkdir()
-        java = repo / "tools" / "java"
-        java.parent.mkdir()
-        java.write_text("#!/bin/sh\\n")
-        java.chmod(java.stat().st_mode | stat.S_IEXEC)
-        self.assertEqual(
-            str((repo / "tools/java").resolve()),
-            str((repo / "tools/java").resolve()),
-        )
-
     def test_passing_pack(self) -> None:
         code, printed = self.run_main("passes")
         self.assertEqual(code, 0, printed)
