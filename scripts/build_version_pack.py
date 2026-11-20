@@ -175,8 +175,6 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
     if legacy_low > legacy_high:
         raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
     return legacy_low, legacy_high
-    msg = f"Unrecognised overlay formats value: {legacy!r}"
-    raise ArmourError(msg)
 
 
 def load_mcmeta(repo: Path) -> dict[str, Any]:
@@ -294,10 +292,7 @@ def build_flattened_pack(
     for candidate in (temp, backup):
         reject_symlink_components(candidate, Path(candidate.anchor))
         if candidate.exists():
-            if candidate.is_dir() and not candidate.is_symlink():
-                shutil.rmtree(candidate)
-            else:
-                raise ArmourError(f"Refusing to replace non-directory path: {candidate}")
+            raise ArmourError(f"Temporary build path already exists; refusing cleanup: {candidate}")
 
     temp.mkdir(parents=True)
     backup_created = False
