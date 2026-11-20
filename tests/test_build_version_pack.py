@@ -415,10 +415,24 @@ class MainTests(TempDirTestCase):
             link.symlink_to(pack, target_is_directory=True)
         except OSError:
             self.skipTest("symlinks are unavailable")
-        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+        jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
+        with (
+            mock.patch.object(
+                build_version_pack, "download_server_jar", return_value=jar
+            ),
+            self.assertRaisesRegex(ArmourError, "Symbolic links"),
+        ):
             self.run_main(
-                "--repo", str(repo), "--pack-version", "90",
-                "--cache-dir", "cache-link", "--out", "build/flattened",
+                "--repo",
+                str(repo),
+                "--server-url",
+                "https://x.test/s.jar",
+                "--sha1",
+                "abc",
+                "--cache-dir",
+                "cache-link",
+                "--out",
+                "build/flattened",
             )
         self.assertTrue((pack / "pack.mcmeta").is_file())
 
@@ -426,11 +440,29 @@ class MainTests(TempDirTestCase):
         repo = self.tmp / "repo"
         pack = make_repo(repo / "packs" / "source")
         write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
-        with self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"):
-            self.run_main(
-                "--repo", str(repo), "--pack-version", "90",
-                "--cache-dir", "packs/source/cache", "--out", "build/flattened",
-            )
+        jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
+        for cache_dir in ("packs/source/cache", "packs"):
+            with (
+                self.subTest(cache_dir=cache_dir),
+                mock.patch.object(
+                    build_version_pack, "download_server_jar", return_value=jar
+                ),
+                self.assertRaisesRegex(
+                    ArmourError, "Cache directory must not overlap"
+                ),
+            ):
+                self.run_main(
+                    "--repo",
+                    str(repo),
+                    "--server-url",
+                    "https://x.test/s.jar",
+                    "--sha1",
+                    "abc",
+                    "--cache-dir",
+                    cache_dir,
+                    "--out",
+                    "build/flattened",
+                )
         self.assertTrue((pack / "pack.mcmeta").is_file())
 
     def test_source_map_symlink_is_rejected_before_build(self) -> None:
