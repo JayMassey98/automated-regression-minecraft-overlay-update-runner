@@ -299,6 +299,31 @@ def build_flattened_pack(
     return result
 
 
+def write_source_map(
+    path: Path, result: BuildResult, repo: Path, pack_root: Path, out: Path
+) -> None:
+    """Write the source map without allowing it to replace source files."""
+    source_map = path if path.is_absolute() else repo / path
+    source_map = source_map.resolve()
+    if (
+        source_map == pack_root
+        or pack_root in source_map.parents
+        or source_map in pack_root.parents
+    ):
+        msg = f"Source map must not overwrite the source pack: {source_map}"
+        raise ArmourError(msg)
+    if source_map == out or out in source_map.parents or source_map in out.parents:
+        raise ArmourError(f"Source map must not overlap build output: {source_map}")
+    common_parent = Path(os.path.commonpath((out.parent, source_map.parent)))
+    if common_parent == repo:
+        raise ArmourError(
+            "Source map and build output must share a dedicated output directory "
+            f"below {repo}, not write into repository source files"
+        )
+    source_map.parent.mkdir(parents=True, exist_ok=True)
+    source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the command line."""
     parser = argparse.ArgumentParser(
@@ -351,32 +376,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     out = Path(args.out)
     if not out.is_absolute():
         out = repo / out
+    out = out.resolve()
     result = build_flattened_pack(
-        pack_root, out.resolve(), data_format(pack_version), source_root=repo
+        pack_root, out, data_format(pack_version), source_root=repo
     )
 
     if args.source_map:
-        source_map = Path(args.source_map)
-        if not source_map.is_absolute():
-            source_map = repo / source_map
-        source_map = source_map.resolve()
-        if (
-            source_map == pack_root
-            or pack_root in source_map.parents
-            or source_map in pack_root.parents
-        ):
-            msg = f"Source map must not overwrite the source pack: {source_map}"
-            raise ArmourError(msg)
-        if source_map == out or out in source_map.parents or source_map in out.parents:
-            raise ArmourError(f"Source map must not overlap build output: {source_map}")
-        common_parent = Path(os.path.commonpath((out.parent, source_map.parent)))
-        if common_parent == repo:
-            raise ArmourError(
-                "Source map and build output must share a dedicated output directory "
-                f"below {repo}, not write into repository source files"
-            )
-        source_map.parent.mkdir(parents=True, exist_ok=True)
-        source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+        write_source_map(Path(args.source_map), result, repo, pack_root, out)
 
     label = f"{result.fmt[0]}.{result.fmt[1]}"
     applied = " + ".join(result.applied)
