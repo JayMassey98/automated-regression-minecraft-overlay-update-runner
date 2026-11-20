@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -29,6 +30,7 @@ DOWNLOAD_ATTEMPTS = 4
 JSON_TIMEOUT_SECONDS = 30
 JAR_TIMEOUT_SECONDS = 60
 _HASH_CHUNK_SIZE = 1 << 20
+_SHA1_LENGTH = 40
 
 _T = TypeVar("_T")
 
@@ -163,8 +165,10 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
     A jar that is already cached and still matches is reused.
     """
     expected = sha1.lower()
-    if len(expected) != 40 or any(char not in "0123456789abcdef" for char in expected):
-        raise ArmourError("Server JAR SHA-1 must be exactly 40 hexadecimal characters")
+    if len(expected) != _SHA1_LENGTH or any(char not in "0123456789abcdef" for char in expected):
+        raise ArmourError(
+            f"Server JAR SHA-1 must be exactly {_SHA1_LENGTH} hexadecimal characters"
+        )
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = cache_dir / f"{expected}.jar"
     if target.is_symlink():
@@ -178,8 +182,6 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
         try:
             # A unique exclusive temporary file prevents a pre-created .part symlink
             # from redirecting writes, and keeps retries isolated from one another.
-            import tempfile
-
             fd, name = tempfile.mkstemp(prefix=f".{expected}.", suffix=".part", dir=cache_dir)
             partial = Path(name)
             with (
