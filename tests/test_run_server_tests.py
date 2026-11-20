@@ -362,7 +362,10 @@ class MainTests(TempDirTestCase):
     def test_cache_directory_inside_nested_source_pack_is_rejected(self) -> None:
         repo = self.tmp / "repo"
         pack = repo / "packs" / "source"
-        write(repo / "armour.json", json.dumps({"pack_name": "demo", "pack_path": "packs/source"}))
+        write(
+            repo / "armour.json",
+            json.dumps({"pack_name": "demo", "pack_path": "packs/source"}),
+        )
         write(pack / "pack.mcmeta", '{"pack": {"max_format": 94}}')
         write(pack / "data/demo/function/a.mcfunction")
         args = [
