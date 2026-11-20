@@ -281,9 +281,11 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     out = out.resolve()
     if paths_overlap(out, repo):
         raise ArmourError(f"Build output must not overlap the source pack: {out}")
-    protected = {".git", ".github", ".armour", "tests", "harness", ".venv",
-                 "venv", "node_modules", ".mc-cache"}
-    if out.parent == source_root and out.name in protected:
+    protected = {
+        ".git", ".github", ".armour", "tests", "harness", ".venv",
+        "venv", "node_modules", ".mc-cache",
+    }
+    if any(paths_overlap(out, source_root / name) for name in protected):
         raise ArmourError(f"Build output is a protected repository directory: {out}")
     if out.exists() and not out.is_dir():
         raise ArmourError(f"Build output exists and is not a directory: {out}")
@@ -321,13 +323,14 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
         temp.rename(out)
         if backup_created:
             shutil.rmtree(backup)
-        return result
     except Exception:
         if temp.exists():
             shutil.rmtree(temp, ignore_errors=True)
         if backup_created and backup.exists() and not out.exists():
             backup.rename(out)
         raise
+    else:
+        return result
 
 
 def validate_source_map_path(path: Path, repo: Path, pack_root: Path, out: Path) -> Path:
@@ -403,7 +406,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
     """Command-line entry point."""
     args = parse_args(argv)
     download_version = args.pack_version is None
