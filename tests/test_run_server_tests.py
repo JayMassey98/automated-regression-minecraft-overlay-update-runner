@@ -289,7 +289,9 @@ class ReportTests(unittest.TestCase):
 
 @unittest.skipIf(sys.platform == "win32", "needs a POSIX shell script as fake java")
 class MainTests(TempDirTestCase):
-    def run_main(self, mode: str, *, nested: bool = False) -> tuple[int, str]:
+    def run_main(
+        self, mode: str, *, nested: bool = False, default_work_dir: bool = False
+    ) -> tuple[int, str]:
         repo = self.tmp / "repo"
         pack = repo / "packs" / "deep pack" if nested else repo
         config = {"pack_name": "demo"}
@@ -311,11 +313,10 @@ class MainTests(TempDirTestCase):
             code = run_server_tests.main(
                 [
                     "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-                    "--sha1", "0", "--server-jar", str(jar), "--java", str(java),
-                    "--repo", str(repo), "--tests-dir", str(repo / "tests"),
-                    "--work-dir", str(self.tmp / "run"), "--startup-timeout", "10",
-                    "--test-timeout", "10",
-                ]
+                    "--sha1", "0", "--server-jar", "../server.jar", "--java", "tools/java",
+                    "--repo", str(repo), "--tests-dir", "tests",
+                    "--startup-timeout", "10", "--test-timeout", "10",
+                ] + ([] if default_work_dir else ["--work-dir", str(self.tmp / "run")])
             )  # fmt: skip
         return code, out.getvalue()
 
@@ -341,6 +342,13 @@ class MainTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "must not overlap"):
             run_server_tests.main(args)
         self.assertEqual(sentinel.read_text(), "safe")
+
+    def test_default_work_directory_is_a_sibling_of_repo(self) -> None:
+        code, printed = self.run_main("passes", default_work_dir=True)
+        self.assertEqual(code, 0, printed)
+        work = self.tmp / ".repo-server-run"
+        self.assertTrue((work / "world/datapacks/demo/pack.mcmeta").is_file())
+        self.assertTrue((self.tmp / "repo/pack.mcmeta").is_file())
 
     def test_passing_pack(self) -> None:
         code, printed = self.run_main("passes")
