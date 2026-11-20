@@ -301,23 +301,39 @@ class MainTests(TempDirTestCase):
         write(pack / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
         write(pack / "data/demo/function/a.mcfunction")
         make_tests_pack(repo, "demo_test")
-        java = self.tmp / "fake-java"
+        java = repo / "tools" / "java"
+        java.parent.mkdir(parents=True)
         java.write_text(
-            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\n'
+            f'#!/bin/sh\\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\\n'
         )
         java.chmod(java.stat().st_mode | stat.S_IEXEC)
         jar = self.tmp / "server.jar"
         jar.write_bytes(b"")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--server-jar",
+            "../server.jar",
+            "--java",
+            "tools/java",
+            "--repo",
+            str(repo),
+            "--tests-dir",
+            "tests",
+            "--startup-timeout",
+            "10",
+            "--test-timeout",
+            "10",
+        ]
+        if not default_work_dir:
+            args.extend(["--work-dir", str(self.tmp / "run")])
         out = io.StringIO()
         with fast_pauses(), redirect_stdout(out):
-            code = run_server_tests.main(
-                [
-                    "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-                    "--sha1", "0", "--server-jar", "../server.jar", "--java", "tools/java",
-                    "--repo", str(repo), "--tests-dir", "tests",
-                    "--startup-timeout", "10", "--test-timeout", "10",
-                ] + ([] if default_work_dir else ["--work-dir", str(self.tmp / "run")])
-            )  # fmt: skip
+            code = run_server_tests.main(args)
         return code, out.getvalue()
 
     def test_work_directory_inside_repository_is_rejected_before_deletion(self) -> None:
