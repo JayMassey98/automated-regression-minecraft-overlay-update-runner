@@ -58,9 +58,9 @@ server tests across target versions in parallel to speed up verification.
    build and server-test scripts are interpreted from the repository root, not
    the current working directory. The version-discovery script's local
    `--manifest` path is relative to the current working directory; URLs are
-   unaffected. The server runner's default work directory and default server-JAR cache are
-   hidden siblings of the repository; any explicit `--work-dir` must also be
-   outside the repository and staged inputs.
+   unaffected. The server runner's default work directory and default server-JAR
+   cache are hidden siblings of the repository; any explicit `--work-dir` must
+   also be outside the repository and staged inputs.
    See
    `elemental-tools/.github/workflows/ci.yml` for a complete example.
 
