@@ -34,13 +34,13 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from armour_paths import resolve_pack_root
 from armour_common import (
     ArmourError,
     append_summary,
     download_server_jar,
     run,
 )
+from armour_paths import resolve_pack_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
