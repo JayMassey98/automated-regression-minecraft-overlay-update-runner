@@ -365,6 +365,11 @@ def validate_source_map_path(
             f"below {repo}, not write into repository source files"
         )
 
+    if source_map.exists() and not source_map.is_file():
+        raise ArmourError(f"Source map must be a file path: {source_map}")
+    for parent in source_map.parents:
+        if parent.exists() and not parent.is_dir():
+            raise ArmourError(f"Source-map parent is not a directory: {parent}")
     temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
     if temporary.exists() or temporary.is_symlink():
         raise ArmourError(f"Source-map temporary path already exists: {temporary}")
