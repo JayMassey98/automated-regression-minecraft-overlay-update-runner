@@ -50,6 +50,22 @@ def _configured_path(repo: Path) -> str | None:
     return value
 
 
+def validate_pack_path(repo: Path, selected: str) -> Path:
+    """Resolve a non-empty pack path and ensure it remains inside the repository."""
+    repo = repo.resolve()
+    if not isinstance(selected, str) or not selected.strip():
+        raise ArmourError("pack_path must be a non-empty relative path string")
+    relative = PurePosixPath(selected)
+    if relative.is_absolute() or "\\" in selected or ".." in relative.parts:
+        raise ArmourError(
+            f"pack_path must be a relative path inside {repo}: {selected!r}"
+        )
+    target = (repo / Path(*relative.parts)).resolve()
+    if not target.is_relative_to(repo):
+        raise ArmourError(f"pack_path must stay inside the repository: {selected!r}")
+    return target
+
+
 def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
     """Resolve one pack inside repo, independent of the caller's working directory.
 
@@ -59,16 +75,7 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
     repo = repo.resolve()
     selected = pack_path if pack_path is not None else _configured_path(repo)
     if selected is not None:
-        relative = PurePosixPath(selected)
-        if relative.is_absolute() or ".." in relative.parts or not selected.strip():
-            raise ArmourError(
-                f"pack_path must be a relative path inside {repo}: {selected!r}"
-            )
-        target = (repo / Path(*relative.parts)).resolve()
-        if not target.is_relative_to(repo):
-            raise ArmourError(
-                f"pack_path must stay inside the repository: {selected!r}"
-            )
+        target = validate_pack_path(repo, selected)
         if not _is_pack(target):
             raise ArmourError(
                 f"Configured data pack {selected!r} is invalid: expected pack.mcmeta "
