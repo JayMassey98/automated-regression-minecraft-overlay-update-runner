@@ -136,7 +136,7 @@ def as_format(value: object, *, upper: bool) -> Format:
     raise ArmourError(msg)
 
 
-def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
+def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:  # noqa: C901
     """Return the inclusive (low, high) format range an overlay entry applies to."""
     low: Format = (0, 0)
     high: Format = (MINOR_INFINITY, MINOR_INFINITY)
@@ -415,7 +415,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
     """Command-line entry point."""
     args = parse_args(argv)
     download_version = args.pack_version is None
