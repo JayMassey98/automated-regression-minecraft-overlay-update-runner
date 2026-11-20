@@ -132,6 +132,11 @@ class OverlayEntriesTests(TestCase):
     def test_no_overlays(self) -> None:
         self.assertEqual(build_version_pack.overlay_entries({"pack": {}}), [])
 
+    def test_rejects_malformed_overlay_shapes(self) -> None:
+        for overlays in (None, [], {"entries": None}, {"entries": [None]}, {"entries": ["x"]}):
+            with self.subTest(overlays), self.assertRaises(ArmourError):
+                build_version_pack.overlay_entries({"overlays": overlays})
+
     def test_rejects_bad_directories(self) -> None:
         for directory in (None, "", "../escape", "/abs", "a/../../b"):
             mcmeta = {"overlays": {"entries": [{"directory": directory}]}}
@@ -207,6 +212,23 @@ class BuildTests(TempDirTestCase):
         (repo / "old/data").rmdir()
         with self.assertRaisesRegex(ArmourError, "does not exist"):
             self.build(repo, (90, 0))
+
+    def test_output_must_not_overlap_source_pack(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        for out in (repo, repo / "generated", repo.parent):
+            with self.subTest(out), self.assertRaisesRegex(ArmourError, "overlap"):
+                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertTrue((repo / "data/p/function/root.mcfunction").is_file())
+
+    def test_data_symlinks_are_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        outside = write(self.tmp / "outside.mcfunction", "outside")
+        try:
+            (repo / "data/p/function/outside.mcfunction").symlink_to(outside)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
 
     def test_missing_pack_mcmeta_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArmourError, "pack.mcmeta"):
