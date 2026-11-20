@@ -10,6 +10,7 @@ from armour_common import ArmourError
 
 CONFIG_FILE = "armour.json"
 FORMAT_RANGE_LENGTH = 2
+FORMAT_MINOR_INFINITY = 10**9
 # Only exclude repository-level tooling/output directories. A directory named
 # "build", "tests", etc. deeper in a consuming repository may contain the pack.
 EXCLUDED_ROOT_DIRS = frozenset(
@@ -59,6 +60,17 @@ def _valid_pack_metadata(metadata: object) -> bool:  # noqa: PLR0911
                 for part in value
             )
         ):
+            return False
+    if "min_format" in pack and "max_format" in pack:
+        low = pack["min_format"]
+        high = pack["max_format"]
+        low_pair = (low, 0) if isinstance(low, int) else tuple(low)
+        high_pair = (
+            (high, FORMAT_MINOR_INFINITY)
+            if isinstance(high, int)
+            else tuple(high)
+        )
+        if low_pair > high_pair:
             return False
     return True
 
