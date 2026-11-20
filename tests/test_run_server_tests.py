@@ -419,7 +419,7 @@ class MainTests(TempDirTestCase):
         repo = self.tmp / "repo"
         write(repo / "armour.json", '{"pack_name": "demo"}')
         write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
-        write(repo / "data/demo/function/a.mcfunction')
+        write(repo / "data/demo/function/a.mcfunction")
         tests_target = self.tmp / "real-tests"
         make_tests_pack(tests_target, "demo_test")
         tests_link = self.tmp / "tests-link"
