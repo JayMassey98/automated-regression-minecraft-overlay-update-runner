@@ -256,7 +256,7 @@ class BuildTests(TempDirTestCase):
     def test_protected_repository_output_is_rejected(self) -> None:
         root = self.tmp / "repo"
         repo = make_repo(root / "packs" / "source")
-        for name in ("tests", ".git", ".github"):
+        for name in ("tests", ".git", ".github", "build"):
             target = root / name
             write(target / "keep.txt", "keep")
             with self.subTest(name), self.assertRaisesRegex(ArmourError, "protected"):
