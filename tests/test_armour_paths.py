@@ -115,11 +115,19 @@ class ResolvePackTests(TempDirTestCase):
             armour_paths.resolve_pack_root(self.tmp, "external")
         shutil.rmtree(outside)
 
-    def test_empty_pack_metadata_is_not_discovered(self) -> None:
-        write(self.tmp / "pack.mcmeta", json.dumps({"pack": {}}))
-        write(self.tmp / "data/example/function/test.mcfunction")
-        with self.assertRaisesRegex(ArmourError, "No data pack found"):
-            armour_paths.resolve_pack_root(self.tmp)
+    def test_empty_or_inverted_pack_metadata_is_not_discovered(self) -> None:
+        for pack_metadata in (
+            {},
+            {"min_format": 100, "max_format": 80},
+        ):
+            with self.subTest(pack_metadata=pack_metadata):
+                write(
+                    self.tmp / "pack.mcmeta",
+                    json.dumps({"pack": pack_metadata}),
+                )
+                write(self.tmp / "data/example/function/test.mcfunction")
+                with self.assertRaisesRegex(ArmourError, "No data pack found"):
+                    armour_paths.resolve_pack_root(self.tmp)
 
     def test_invalid_configured_pack_is_reported(self) -> None:
         write(self.tmp / "armour.json", json.dumps({"pack_path": "missing"}))
