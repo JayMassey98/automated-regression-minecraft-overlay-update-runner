@@ -169,6 +169,7 @@ def stage_tests_pack(tests: Path, destination: Path, namespace: str) -> int:
             f"so there are no tests to run (looked in {tests})."
         )
         raise ArmourError(msg)
+    _reject_symlinks(tests)
     shutil.copytree(tests, destination)
     count = generate(destination, namespace)  # never run a stale test list
     widen_max_format(destination / "pack.mcmeta")
@@ -492,7 +493,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not tests_dir.is_absolute():
         tests_dir = repo / tests_dir
     tests_dir = tests_dir.resolve()
-    protected = (repo, pack_root, tests_dir, HARNESS_PACK_DIR.resolve())
+    server_jar = Path(args.server_jar) if args.server_jar else None
+    if server_jar is not None and not server_jar.is_absolute():
+        server_jar = repo / server_jar
+    if server_jar is not None:
+        server_jar = server_jar.resolve()
+    cache_dir = Path(args.cache_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo / cache_dir
+    cache_dir = cache_dir.resolve()
+    protected = (
+        repo, pack_root, tests_dir, HARNESS_PACK_DIR.resolve(), cache_dir,
+        *((server_jar,) if server_jar is not None else ()),
+    )
     for source in protected:
         if _paths_overlap(work, source):
             raise ArmourError(
@@ -505,16 +518,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     datapacks = work / "world" / "datapacks"
     datapacks.mkdir(parents=True)
 
-    server_jar = Path(args.server_jar) if args.server_jar else None
-    if server_jar is not None and not server_jar.is_absolute():
-        server_jar = repo / server_jar
-    cache_dir = Path(args.cache_dir)
-    if not cache_dir.is_absolute():
-        cache_dir = repo / cache_dir
     jar = (
         server_jar
         if server_jar is not None
-        else download_server_jar(args.server_url, args.sha1, cache_dir.resolve())
+        else download_server_jar(args.server_url, args.sha1, cache_dir)
     )
     stage_data_pack(
         pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot"
@@ -532,7 +539,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if ("/" in java or "\\" in java) and not Path(java).is_absolute():
         java = str((repo / java).resolve())
     lines, problem = run_tests_on_server(
-        [java, JAVA_HEAP, "-jar", str(jar), "nogui"],
+        [java, JAVA_HEAP, "-jar", str(Path(jar).resolve()), "nogui"],
         work,
         armour_config.START_COMMAND,
         startup_timeout=args.startup_timeout,
