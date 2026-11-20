@@ -408,6 +408,22 @@ class MainTests(TempDirTestCase):
         download.assert_called_once()
         self.assertIn("Data pack format 90.0", printed)
 
+    def test_cache_symlink_cannot_redirect_into_external_pack(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "source")
+        write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
+        link = repo / "cache-link"
+        try:
+            link.symlink_to(pack, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            self.run_main(
+                "--repo", str(repo), "--pack-version", "90",
+                "--cache-dir", "cache-link", "--out", "build/flattened",
+            )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
     def test_cache_cannot_overlap_selected_source_pack(self) -> None:
         repo = self.tmp / "repo"
         pack = make_repo(repo / "packs" / "source")
