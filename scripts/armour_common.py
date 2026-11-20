@@ -165,7 +165,7 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
     A jar that is already cached and still matches is reused.
     """
     expected = sha1.lower()
-    if len(expected) != _SHA1_LENGTH or any(char not in "0123456789abcdef" for char in expected):
+    if len(expected) != _SHA1_LENGTH or any(\n        char not in "0123456789abcdef" for char in expected\n    ):
         raise ArmourError(
             f"Server JAR SHA-1 must be exactly {_SHA1_LENGTH} hexadecimal characters"
         )
@@ -182,7 +182,7 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
         try:
             # A unique exclusive temporary file prevents a pre-created .part symlink
             # from redirecting writes, and keeps retries isolated from one another.
-            fd, name = tempfile.mkstemp(prefix=f".{expected}.", suffix=".part", dir=cache_dir)
+            fd, name = tempfile.mkstemp(\n                prefix=f".{expected}.", suffix=".part", dir=cache_dir\n            )
             partial = Path(name)
             with (
                 os.fdopen(fd, "wb") as handle,
