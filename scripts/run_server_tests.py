@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import armour_config
-from armour_paths import resolve_pack_root
 from armour_common import (
     ArmourError,
     annotate,
@@ -40,6 +39,7 @@ from armour_common import (
     download_server_jar,
     run,
 )
+from armour_paths import resolve_pack_root
 from build_version_pack import load_mcmeta, overlay_entries
 from generate_test_runner import generate
 
@@ -441,7 +441,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", default=".", help="consuming repository root")
     parser.add_argument(
         "--pack-path",
-        help="data pack directory relative to --repo; overrides armour.json and auto-discovery",
+        help=(
+            "data pack directory relative to --repo; overrides armour.json "
+            "and auto-discovery"
+        ),
     )
     parser.add_argument("--tests-dir", default="tests")
     parser.add_argument("--work-dir", default="server-run")
@@ -463,7 +466,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     pack_path = args.pack_path if args.pack_path is not None else config.pack_path
     pack_root = resolve_pack_root(repo, pack_path)
     work_dir = Path(args.work_dir)
-    work = (repo / work_dir).resolve() if not work_dir.is_absolute() else work_dir.resolve()
+    work = (
+        (repo / work_dir).resolve()
+        if not work_dir.is_absolute()
+        else work_dir.resolve()
+    )
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
@@ -480,7 +487,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if server_jar is not None
         else download_server_jar(args.server_url, args.sha1, cache_dir.resolve())
     )
-    stage_data_pack(pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot")
+    stage_data_pack(
+        pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot"
+    )
     stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
     tests_dir = Path(args.tests_dir)
     if not tests_dir.is_absolute():
