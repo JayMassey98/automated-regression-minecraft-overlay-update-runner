@@ -277,11 +277,15 @@ class ReportTests(unittest.TestCase):
 
 @unittest.skipIf(sys.platform == "win32", "needs a POSIX shell script as fake java")
 class MainTests(TempDirTestCase):
-    def run_main(self, mode: str) -> tuple[int, str]:
+    def run_main(self, mode: str, *, nested: bool = False) -> tuple[int, str]:
         repo = self.tmp / "repo"
-        write(repo / "armour.json", '{"pack_name": "demo"}')
-        write(repo / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
-        write(repo / "data/demo/function/a.mcfunction")
+        pack = repo / "packs" / "deep pack" if nested else repo
+        config = {"pack_name": "demo"}
+        if nested:
+            config["pack_path"] = "packs/deep pack"
+        write(repo / "armour.json", json.dumps(config))
+        write(pack / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
+        write(pack / "data/demo/function/a.mcfunction")
         make_tests_pack(repo, "demo_test")
         java = self.tmp / "fake-java"
         java.write_text(
@@ -314,6 +318,18 @@ class MainTests(TempDirTestCase):
         self.assertIn(
             "file/armour,file/demo,file/demo_test",
             (self.tmp / "run/server.properties").read_text(),
+        )
+
+    def test_nested_pack_is_staged_without_modifying_the_source(self) -> None:
+        code, printed = self.run_main("passes", nested=True)
+        self.assertEqual(code, 0, printed)
+        staged = self.tmp / "run/world/datapacks/demo"
+        self.assertTrue((staged / "pack.mcmeta").is_file())
+        self.assertTrue((staged / "data/demo/function/a.mcfunction").is_file())
+        source = self.tmp / "repo/packs/deep pack"
+        self.assertEqual(
+            json.loads((source / "pack.mcmeta").read_text())["pack"]["max_format"],
+            94,
         )
 
     def test_failing_test_gives_exit_code_1(self) -> None:
