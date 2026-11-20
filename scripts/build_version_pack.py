@@ -258,6 +258,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point."""
     args = parse_args(argv)
+    repo = Path(args.repo).resolve()
 
     if args.pack_version is not None:
         try:
@@ -276,7 +277,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         msg = "Give either --server-url and --sha1, or --pack-version"
         raise ArmourError(msg)
 
-    repo = Path(args.repo).resolve()
     pack_root = resolve_pack_root(repo, args.pack_path)
     out = Path(args.out)
     if not out.is_absolute():
