@@ -512,6 +512,27 @@ class MainTests(TempDirTestCase):
         self.assertFalse((self.tmp / "out").exists())
         self.assertFalse((external / "source-map.json").exists())
 
+    def test_invalid_source_map_destinations_fail_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        (repo / "map-directory").mkdir()
+        write(repo / "map-parent", "not a directory")
+        for source_map in ("map-directory", "map-parent/source-map.json"):
+            with self.subTest(source_map=source_map):
+                out = self.tmp / f"out-{source_map.split('/')[0]}"
+                with self.assertRaisesRegex(ArmourError, "Source map|Source-map parent"):
+                    self.run_main(
+                        "--repo",
+                        str(repo),
+                        "--pack-version",
+                        "90",
+                        "--out",
+                        str(out),
+                        "--source-map",
+                        source_map,
+                    )
+                self.assertFalse(out.exists())
+
     def test_needs_a_jar_or_a_pack_version(self) -> None:
         with self.assertRaisesRegex(ArmourError, "--pack-version"):
             self.run_main("--out", str(self.tmp / "out"))
