@@ -155,7 +155,6 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
     )
 
 
-
 def reject_symlink_components(path: Path, base: Path) -> None:
     """Reject symlink components below a known, resolved base directory."""
     base = base.resolve()
