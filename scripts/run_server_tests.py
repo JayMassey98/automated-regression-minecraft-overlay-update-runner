@@ -439,7 +439,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--sha1", required=True)
     parser.add_argument("--cache-dir", default=".mc-cache")
     parser.add_argument("--repo", default=".", help="consuming repository root")
-    parser.add_argument("--pack-path", help="data pack directory relative to --repo; overrides armour.json and auto-discovery")
+    parser.add_argument(
+        "--pack-path",
+        help="data pack directory relative to --repo; overrides armour.json and auto-discovery",
+    )
     parser.add_argument("--tests-dir", default="tests")
     parser.add_argument("--work-dir", default="server-run")
     parser.add_argument("--java", default="java")
@@ -469,13 +472,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     server_jar = Path(args.server_jar) if args.server_jar else None
     if server_jar is not None and not server_jar.is_absolute():
         server_jar = repo / server_jar
+    cache_dir = Path(args.cache_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo / cache_dir
     jar = (
         server_jar
         if server_jar is not None
-        else download_server_jar(
-            args.server_url, args.sha1,
-            ((repo / args.cache_dir).resolve() if not Path(args.cache_dir).is_absolute() else Path(args.cache_dir).resolve())
-        )
+        else download_server_jar(args.server_url, args.sha1, cache_dir.resolve())
     )
     stage_data_pack(pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot")
     stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
