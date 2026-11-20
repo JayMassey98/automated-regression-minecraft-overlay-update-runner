@@ -326,11 +326,20 @@ class MainTests(TempDirTestCase):
         write(repo / "data/demo/function/a.mcfunction")
         sentinel = repo / "keep.txt"
         sentinel.write_text("safe")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--work-dir",
+            ".",
+        ]
         with self.assertRaisesRegex(ArmourError, "must not overlap"):
-            run_server_tests.main([
-                "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-                "--sha1", "0", "--repo", str(repo), "--work-dir", ".",
-            ])
+            run_server_tests.main(args)
         self.assertEqual(sentinel.read_text(), "safe")
 
     def test_passing_pack(self) -> None:
