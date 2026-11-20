@@ -457,7 +457,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo = Path(args.repo).resolve()
     config = armour_config.load(repo)
-    pack_root = resolve_pack_root(repo, args.pack_path or config.pack_path)
+    pack_path = args.pack_path if args.pack_path is not None else config.pack_path
+    pack_root = resolve_pack_root(repo, pack_path)
     work_dir = Path(args.work_dir)
     work = (repo / work_dir).resolve() if not work_dir.is_absolute() else work_dir.resolve()
     if work.exists():
