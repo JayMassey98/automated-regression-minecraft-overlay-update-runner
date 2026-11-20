@@ -443,7 +443,7 @@ class MainTests(TempDirTestCase):
         pack = make_repo(repo / "packs" / "source")
         write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
         jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
-        for cache_dir in ("packs/source/cache", "packs"):
+        for cache_dir in ("packs/source/cache", "packs", ".mc-cache"):
             with (
                 self.subTest(cache_dir=cache_dir),
                 mock.patch.object(
