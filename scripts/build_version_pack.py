@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from armour_paths import resolve_pack_root
 from armour_common import (
     ArmourError,
     append_summary,
@@ -268,8 +269,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         msg = "Give either --server-url and --sha1, or --pack-version"
         raise ArmourError(msg)
 
+    repo = Path(args.repo).resolve()
+    pack_root = resolve_pack_root(repo, args.pack_path)
     result = build_flattened_pack(
-        Path(args.repo).resolve(), Path(args.out).resolve(), data_format(pack_version)
+        pack_root, Path(args.out).resolve(), data_format(pack_version)
     )
 
     if args.source_map:
