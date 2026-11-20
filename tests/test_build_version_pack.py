@@ -105,8 +105,11 @@ class FormatTests(TestCase):
         with self.assertRaisesRegex(ArmourError, "minimum format exceeds maximum"):
             build_version_pack.overlay_range({"min_format": 90, "max_format": 80})
         for legacy in ([90, 80], {"min_inclusive": 90, "max_inclusive": 80}):
-            with self.subTest(legacy=legacy), self.assertRaisesRegex(
-                ArmourError, "minimum format exceeds maximum"
+            with (
+                self.subTest(legacy=legacy),
+                self.assertRaisesRegex(
+                    ArmourError, "minimum format exceeds maximum"
+                ),
             ):
                 build_version_pack.overlay_range({"formats": legacy})
 
