@@ -19,6 +19,16 @@ class LoadTests(TempDirTestCase):
         write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": "packs/p"}')
         self.assertEqual(armour_config.load(self.tmp).pack_path, "packs/p")
 
+    def test_empty_pack_path_is_rejected(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": ""}')
+        with self.assertRaisesRegex(ArmourError, "pack_path"):
+            armour_config.load(self.tmp)
+
+    def test_invalid_utf8_is_a_clean_error(self) -> None:
+        (self.tmp / "armour.json").write_bytes(b"\\xff")
+        with self.assertRaisesRegex(ArmourError, "UTF-8"):
+            armour_config.load(self.tmp)
+
     def test_invalid_pack_path_type(self) -> None:
         write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": 7}')
         with self.assertRaisesRegex(ArmourError, "pack_path"):
