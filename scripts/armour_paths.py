@@ -9,11 +9,26 @@ from pathlib import Path, PurePosixPath
 from armour_common import ArmourError
 
 CONFIG_FILE = "armour.json"
-EXCLUDED_DIRS = frozenset({
-    ".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache",
-    ".mypy_cache", ".ruff_cache", "node_modules", "build", "dist",
-    ".mc-cache", "server-run", "harness", "tests", ".armour",
-})
+EXCLUDED_DIRS = frozenset(
+    {
+        ".git",
+        ".github",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "build",
+        "dist",
+        ".mc-cache",
+        "server-run",
+        "harness",
+        "tests",
+        ".armour",
+    }
+)
 
 
 def _is_pack(path: Path) -> bool:
