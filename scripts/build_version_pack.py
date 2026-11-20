@@ -436,9 +436,10 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         cache_dir = cache_dir.absolute()
         reject_symlink_components(cache_dir, Path(cache_dir.anchor))
         cache_dir = cache_dir.resolve()
-        if paths_overlap(cache_dir, pack_root):
+        if paths_overlap(cache_dir, repo):
             raise ArmourError(
-                f"Cache directory must not overlap the source pack: {cache_dir}"
+                "Cache directory must be outside the consuming repository "
+                f"and source pack: {cache_dir}"
             )
 
     out = Path(args.out)
