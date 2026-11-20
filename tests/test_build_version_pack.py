@@ -104,6 +104,11 @@ class FormatTests(TestCase):
             build_version_pack.overlay_range({"formats": "81"})
         with self.assertRaisesRegex(ArmourError, "minimum format exceeds maximum"):
             build_version_pack.overlay_range({"min_format": 90, "max_format": 80})
+        for legacy in ([90, 80], {"min_inclusive": 90, "max_inclusive": 80}):
+            with self.subTest(legacy=legacy), self.assertRaisesRegex(
+                ArmourError, "minimum format exceeds maximum"
+            ):
+                build_version_pack.overlay_range({"formats": legacy})
 
 
 class ReadVersionJsonTests(TempDirTestCase):
@@ -234,6 +239,43 @@ class BuildTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "Symbolic links"):
             build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
 
+    def test_invalid_overlay_does_not_destroy_previous_output(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        write(out / "previous-success.txt", "keep")
+        metadata = json.loads((repo / "pack.mcmeta").read_text())
+        metadata["overlays"]["entries"].append(
+            {"directory": "missing", "formats": [99, 90]}
+        )
+        write(repo / "pack.mcmeta", json.dumps(metadata))
+        with self.assertRaises(ArmourError):
+            build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((out / "previous-success.txt").read_text(), "keep")
+
+    def test_protected_repository_output_is_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo" / "packs" / "source")
+        root = repo.parents[1]
+        for name in ("tests", ".git", ".github"):
+            target = root / name
+            write(target / "keep.txt", "keep")
+            with self.subTest(name), self.assertRaisesRegex(ArmourError, "protected"):
+                build_version_pack.build_flattened_pack(repo, target, (90, 0))
+            self.assertEqual((target / "keep.txt").read_text(), "keep")
+
+    def test_symlinked_output_and_parent_are_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        external = self.tmp / "external"
+        write(external / "keep.txt", "safe")
+        try:
+            (self.tmp / "out-link").symlink_to(external, target_is_directory=True)
+            (self.tmp / "parent-link").symlink_to(self.tmp, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        for out in (self.tmp / "out-link", self.tmp / "parent-link" / "other"):
+            with self.subTest(out), self.assertRaisesRegex(ArmourError, "Symbolic links"):
+                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((external / "keep.txt").read_text(), "safe")
+
     def test_missing_pack_mcmeta_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArmourError, "pack.mcmeta"):
             self.build(self.tmp, (90, 0))
@@ -357,6 +399,34 @@ class MainTests(TempDirTestCase):
         self.assertEqual(code, 0)
         download.assert_called_once()
         self.assertIn("Data pack format 90.0", printed)
+
+    def test_cache_cannot_overlap_selected_source_pack(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "source")
+        write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
+        with self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"):
+            self.run_main(
+                "--repo", str(repo), "--pack-version", "90",
+                "--cache-dir", "packs/source/cache", "--out", "build/flattened",
+            )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
+    def test_source_map_symlink_is_rejected_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        external = self.tmp / "external.json"
+        external.write_text("keep")
+        try:
+            (repo / "map-link.json").symlink_to(external)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            self.run_main(
+                "--repo", str(repo), "--pack-version", "90",
+                "--out", str(self.tmp / "out"), "--source-map", "map-link.json",
+            )
+        self.assertEqual(external.read_text(), "keep")
+        self.assertFalse((self.tmp / "out").exists())
 
     def test_needs_a_jar_or_a_pack_version(self) -> None:
         with self.assertRaisesRegex(ArmourError, "--pack-version"):
