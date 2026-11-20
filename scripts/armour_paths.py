@@ -125,7 +125,7 @@ def validate_pack_path(repo: Path, selected: str) -> Path:
     for part in relative.parts:
         current = current / part
         if current.is_symlink():
-            raise ArmourError(f"Symbolic links are not allowed in pack paths: {current}")
+            raise ArmourError(f"Symbolic links are not allowed in pack paths; pack_path must stay inside the repository: {current}")
     target = lexical.resolve()
     if not target.is_relative_to(repo):
         raise ArmourError(f"pack_path must stay inside the repository: {selected!r}")
