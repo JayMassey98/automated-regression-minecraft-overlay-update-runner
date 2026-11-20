@@ -238,6 +238,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--repo", default=".", help="repository root (contains pack.mcmeta and data/)"
     )
+    parser.add_argument(
+        "--pack-path", help="data pack directory relative to --repo"
+    )
     parser.add_argument("--server-url", help="Mojang server.jar URL for this version")
     parser.add_argument("--sha1", help="expected SHA-1 of the server jar")
     parser.add_argument(
