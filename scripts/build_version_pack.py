@@ -403,6 +403,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point."""
     args = parse_args(argv)
+    if args.pack_version is None and not (args.server_url and args.sha1):
+        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
+    pack_version = None
+    if args.pack_version is not None:
+        try:
+            pack_version = json.loads(args.pack_version)
+        except json.JSONDecodeError as error:
+            raise ArmourError(f"--pack-version is not valid JSON: {error}") from error
     repo = Path(args.repo).resolve()
 
     pack_root = resolve_pack_root(repo, args.pack_path)
@@ -435,18 +443,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_map_path = source_map_path.absolute()
         validate_source_map_path(source_map_path, repo, pack_root, out)
 
-    if args.pack_version is None and not (args.server_url and args.sha1):
-        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
-    if args.pack_version is not None:
-        try:
-            pack_version = json.loads(args.pack_version)
-        except json.JSONDecodeError as error:
-            raise ArmourError(f"--pack-version is not valid JSON: {error}") from error
-    elif args.server_url and args.sha1:
+    if pack_version is None:
         jar = download_server_jar(args.server_url, args.sha1, cache_dir)
         pack_version = read_version_json(jar).get("pack_version")
-    else:
-        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
 
     result = build_flattened_pack(
         pack_root, out, data_format(pack_version), source_root=repo
