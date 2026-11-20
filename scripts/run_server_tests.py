@@ -465,7 +465,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--tests-dir", default="tests")
-    parser.add_argument("--work-dir", default="server-run")
+    parser.add_argument(
+        "--work-dir",
+        help="server work directory (defaults to a sibling of --repo)",
+    )
     parser.add_argument("--java", default="java")
     parser.add_argument("--startup-timeout", type=float, default=300)
     parser.add_argument("--test-timeout", type=float, default=180)
@@ -483,7 +486,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     config = armour_config.load(repo)
     pack_path = args.pack_path if args.pack_path is not None else config.pack_path
     pack_root = resolve_pack_root(repo, pack_path)
-    work_dir = Path(args.work_dir)
+    work_dir = (
+        Path(args.work_dir)
+        if args.work_dir is not None
+        else Path("..") / f".{repo.name}-server-run"
+    )
     work = (
         (repo / work_dir).resolve()
         if not work_dir.is_absolute()
