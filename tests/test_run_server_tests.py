@@ -125,6 +125,18 @@ class StageDataPackTests(TempDirTestCase):
         mcmeta = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
         self.assertEqual(mcmeta["pack"]["max_format"], [9999, 0])
 
+    def test_overlay_directory_symlink_escape_is_rejected(self) -> None:
+        repo = self.make_repo()
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (repo / "ov").rename(repo / "ov-original")
+        try:
+            (repo / "ov").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "escapes the pack|Symbolic links"):
+            run_server_tests.stage_data_pack(repo, self.tmp / "out", widen=False)
+
     def test_missing_overlay_folder(self) -> None:
         repo = self.make_repo()
         for path in sorted(repo.joinpath("ov").rglob("*"), reverse=True):
@@ -306,6 +318,32 @@ class MainTests(TempDirTestCase):
                 ]
             )  # fmt: skip
         return code, out.getvalue()
+
+    def test_work_directory_inside_repository_is_rejected_before_deletion(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        sentinel = repo / "keep.txt"
+        sentinel.write_text("safe")
+        with self.assertRaisesRegex(ArmourError, "must not overlap"):
+            run_server_tests.main([
+                "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
+                "--sha1", "0", "--repo", str(repo), "--work-dir", ".",
+            ])
+        self.assertEqual(sentinel.read_text(), "safe")
+
+    def test_java_relative_path_is_resolved_from_repo(self) -> None:
+        repo = self.tmp / "repo"
+        repo.mkdir()
+        java = repo / "tools" / "java"
+        java.parent.mkdir()
+        java.write_text("#!/bin/sh\\n")
+        java.chmod(java.stat().st_mode | stat.S_IEXEC)
+        self.assertEqual(
+            str((repo / "tools/java").resolve()),
+            str((repo / "tools/java").resolve()),
+        )
 
     def test_passing_pack(self) -> None:
         code, printed = self.run_main("passes")
