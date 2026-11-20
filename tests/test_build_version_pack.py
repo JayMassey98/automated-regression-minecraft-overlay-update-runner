@@ -256,10 +256,12 @@ class BuildTests(TempDirTestCase):
     def test_protected_repository_output_is_rejected(self) -> None:
         root = self.tmp / "repo"
         repo = make_repo(root / "packs" / "source")
-        for name in ("tests", ".git", ".github", "build"):
+        for name in ("tests", ".git", ".github", "build", "docs"):
             target = root / name
             write(target / "keep.txt", "keep")
-            with self.subTest(name), self.assertRaisesRegex(ArmourError, "protected"):
+            with self.subTest(name), self.assertRaisesRegex(
+                ArmourError, "dedicated subdirectory"
+            ):
                 build_version_pack.build_flattened_pack(
                     repo, target, (90, 0), source_root=root
                 )
