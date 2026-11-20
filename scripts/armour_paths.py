@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 from armour_common import ArmourError
 
 CONFIG_FILE = "armour.json"
+FORMAT_RANGE_LENGTH = 2
 # Only exclude repository-level tooling/output directories. A directory named
 # "build", "tests", etc. deeper in a consuming repository may contain the pack.
 EXCLUDED_ROOT_DIRS = frozenset(
@@ -33,7 +34,36 @@ EXCLUDED_ROOT_DIRS = frozenset(
 )
 
 
-def _is_pack(path: Path) -> bool:  # noqa: C901, PLR0911
+def _valid_pack_metadata(metadata: object) -> bool:
+    """Return whether metadata has a supported, non-empty format declaration."""
+    if not isinstance(metadata, dict):
+        return False
+    pack = metadata.get("pack")
+    if not isinstance(pack, dict):
+        return False
+    keys = ("pack_format", "min_format", "max_format")
+    if not any(key in pack for key in keys):
+        return False
+    for key in keys:
+        if key not in pack:
+            continue
+        value = pack[key]
+        if isinstance(value, bool) or not isinstance(value, (int, list)):
+            return False
+        if isinstance(value, int) and value < 0:
+            return False
+        if isinstance(value, list) and (
+            len(value) != FORMAT_RANGE_LENGTH
+            or any(
+                isinstance(part, bool) or not isinstance(part, int) or part < 0
+                for part in value
+            )
+        ):
+            return False
+    return True
+
+
+def _is_pack(path: Path) -> bool:
     """A pack has valid metadata and a data directory."""
     if not (path / "pack.mcmeta").is_file() or not (path / "data").is_dir():
         return False
@@ -41,33 +71,7 @@ def _is_pack(path: Path) -> bool:  # noqa: C901, PLR0911
         metadata = json.loads((path / "pack.mcmeta").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
-    pack = metadata.get("pack") if isinstance(metadata, dict) else None
-    if not isinstance(pack, dict):
-        return False
-    # Reject empty or structurally meaningless pack metadata.
-    if not any(key in pack for key in ("pack_format", "min_format", "max_format")):
-        return False
-    try:
-        for key in ("pack_format", "min_format", "max_format"):
-            if key in pack:
-                value = pack[key]
-                if isinstance(value, bool) or not isinstance(value, (int, list)):
-                    return False
-                if isinstance(value, int) and value < 0:
-                    return False
-                if isinstance(value, list) and (
-                    len(value) != 2
-                    or any(
-                        isinstance(part, bool)
-                        or not isinstance(part, int)
-                        or part < 0
-                        for part in value
-                    )
-                ):
-                    return False
-    except (TypeError, ValueError):
-        return False
-    return True
+    return _valid_pack_metadata(metadata)
 
 
 def _configured_path(repo: Path) -> str | None:
