@@ -359,6 +359,42 @@ class MainTests(TempDirTestCase):
             run_server_tests.main(args)
         self.assertEqual(sentinel.read_text(), "safe")
 
+    def test_cache_directory_inside_nested_source_pack_is_rejected(self) -> None:
+        repo = self.tmp / "repo"
+        pack = repo / "packs" / "source"
+        write(repo / "armour.json", json.dumps({"pack_name": "demo", "pack_path": "packs/source"}))
+        write(pack / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(pack / "data/demo/function/a.mcfunction")
+        args = [
+            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
+            "--sha1", "0", "--repo", str(repo), "--cache-dir", "packs/source/cache",
+            "--work-dir", str(self.tmp / "work"),
+        ]
+        with self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"):
+            run_server_tests.main(args)
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+        self.assertFalse((pack / "cache").exists())
+
+    def test_symlinked_work_directory_is_rejected_without_deleting_target(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        external = self.tmp / "external"
+        write(external / "keep.txt", "safe")
+        link = self.tmp / "work-link"
+        try:
+            link.symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        args = [
+            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
+            "--sha1", "0", "--repo", str(repo), "--work-dir", str(link),
+        ]
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            run_server_tests.main(args)
+        self.assertEqual((external / "keep.txt").read_text(), "safe")
+
     def test_default_work_directory_is_a_sibling_of_repo(self) -> None:
         code, printed = self.run_main("passes", default_work_dir=True)
         self.assertEqual(code, 0, printed)
