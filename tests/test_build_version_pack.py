@@ -282,8 +282,14 @@ class MainTests(TempDirTestCase):
         before = (pack / "pack.mcmeta").read_text(encoding="utf-8")
         with self.assertRaisesRegex(ArmourError, "must not overwrite the source pack"):
             self.run_main(
-                "--repo", str(repo), "--pack-version", "90",
-                "--out", "build/flattened", "--source-map", "packs/pack/pack.mcmeta",
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                "build/flattened",
+                "--source-map",
+                "packs/pack/pack.mcmeta",
             )
         self.assertEqual((pack / "pack.mcmeta").read_text(encoding="utf-8"), before)
 
