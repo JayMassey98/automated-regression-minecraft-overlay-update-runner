@@ -160,8 +160,9 @@ class DownloadTests(TempDirTestCase):
             "",
         ):
             cache = self.tmp / "cache"
-            with self.subTest(value=value), self.assertRaisesRegex(
-                ArmourError, "40 hexadecimal"
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ArmourError, "40 hexadecimal"),
             ):
                 armour_common.download_server_jar("https://x.test", value, cache)
             self.assertFalse(cache.exists())
