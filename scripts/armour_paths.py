@@ -63,7 +63,7 @@ def _valid_pack_metadata(metadata: object) -> bool:
     return True
 
 
-def _is_pack(path: Path) -> bool:
+def _is_pack(path: Path) -> bool:  # noqa: PLR0911
     """A pack has valid metadata and a data directory."""
     if not (path / "pack.mcmeta").is_file() or not (path / "data").is_dir():
         return False
