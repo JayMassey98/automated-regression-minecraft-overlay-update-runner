@@ -428,9 +428,18 @@ class MainTests(TempDirTestCase):
         except OSError:
             self.skipTest("symlinks are unavailable")
         args = [
-            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-            "--sha1", "0", "--repo", str(repo), "--tests-dir", str(tests_link),
-            "--work-dir", str(self.tmp / "work"),
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--tests-dir",
+            str(tests_link),
+            "--work-dir",
+            str(self.tmp / "work"),
         ]
         with self.assertRaisesRegex(ArmourError, "Symbolic links"):
             run_server_tests.main(args)
