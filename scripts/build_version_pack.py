@@ -292,7 +292,10 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
         "node_modules",
         ".mc-cache",
     }
-    if any(paths_overlap(out, source_root / name) for name in protected):
+    build_root = source_root / "build"
+    if out == build_root or any(
+        paths_overlap(out, source_root / name) for name in protected
+    ):
         raise ArmourError(f"Build output is a protected repository directory: {out}")
     if out.exists() and not out.is_dir():
         raise ArmourError(f"Build output exists and is not a directory: {out}")
