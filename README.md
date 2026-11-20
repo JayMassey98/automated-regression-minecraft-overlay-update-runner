@@ -55,7 +55,9 @@ server tests across target versions in parallel to speed up verification.
    the consuming repository root. ARMOUR discovers a single data pack anywhere
    below that root; set `pack_path` in `armour.json` or pass `--pack-path` when
    more than one pack exists. Paths in `armour.json` and relative CLI paths are
-   interpreted from the repository root, not the current working directory.
+   interpreted from the repository root, not the current working directory. The
+server runner's default work directory is a hidden sibling of the repository;
+any explicit `--work-dir` must also be outside the repository and staged inputs.
    See
    `elemental-tools/.github/workflows/ci.yml` for a complete example.
 
