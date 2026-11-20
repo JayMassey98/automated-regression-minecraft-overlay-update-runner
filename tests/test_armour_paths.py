@@ -103,6 +103,18 @@ class ResolvePackTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "UTF-8"):
             armour_paths.resolve_pack_root(self.tmp)
 
+    def test_pack_path_symlink_cannot_escape_repository(self) -> None:
+        outside = self.tmp.parent / (self.tmp.name + "-outside")
+        make_pack(outside)
+        try:
+            (self.tmp / "external").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            shutil.rmtree(outside)
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "stay inside the repository"):
+            armour_paths.resolve_pack_root(self.tmp, "external")
+        shutil.rmtree(outside)
+
     def test_invalid_configured_pack_is_reported(self) -> None:
         write(self.tmp / "armour.json", json.dumps({"pack_path": "missing"}))
         with self.assertRaisesRegex(ArmourError, "Configured data pack"):
