@@ -54,13 +54,15 @@ class ResolvePackTests(TempDirTestCase):
             armour_paths.resolve_pack_root(self.tmp)
 
     def test_pack_under_directory_named_build_or_tests_is_discovered(self) -> None:
-        for folder in ("packs/build", "content/tests", "examples/dist", "resources/harness"):
+        folders = ("packs/build", "content/tests", "examples/dist", "resources/harness")
+        for folder in folders:
             with self.subTest(folder):
                 root = self.tmp / folder
                 make_pack(root)
-                self.assertEqual(armour_paths.resolve_pack_root(self.tmp), root.resolve())
+                self.assertEqual(
+                    armour_paths.resolve_pack_root(self.tmp), root.resolve()
+                )
                 shutil.rmtree(root)
-    
     def test_ambiguous_packs_give_actionable_error(self) -> None:
         make_pack(self.tmp / "packs/a")
         make_pack(self.tmp / "packs/b")
@@ -91,7 +93,7 @@ class ResolvePackTests(TempDirTestCase):
             armour_paths.resolve_pack_root(self.tmp)
 
     def test_invalid_utf8_config_is_a_clean_error(self) -> None:
-        (self.tmp / "armour.json").write_bytes(b"\\xff")
+        (self.tmp / "armour.json").write_bytes(bytes([255]))
         with self.assertRaisesRegex(ArmourError, "UTF-8"):
             armour_paths.resolve_pack_root(self.tmp)
 
