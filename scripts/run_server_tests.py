@@ -503,7 +503,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache_dir = repo / cache_dir
     cache_dir = cache_dir.resolve()
     protected = (
-        repo, pack_root, tests_dir, HARNESS_PACK_DIR.resolve(), cache_dir,
+        repo,
+        pack_root,
+        tests_dir,
+        HARNESS_PACK_DIR.resolve(),
+        cache_dir,
         *((server_jar,) if server_jar is not None else ()),
     )
     for source in protected:
