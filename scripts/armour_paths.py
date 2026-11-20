@@ -64,9 +64,7 @@ def _valid_pack_metadata(metadata: object) -> bool:  # noqa: C901, PLR0911
     if "min_format" in pack and "max_format" in pack:
         low = pack["min_format"]
         high = pack["max_format"]
-        low_pair = (
-            (low, 0) if isinstance(low, int) else tuple(low)
-        )
+        low_pair = (low, 0) if isinstance(low, int) else tuple(low)
         high_pair = (
             (high, FORMAT_MINOR_INFINITY)
             if isinstance(high, int)
