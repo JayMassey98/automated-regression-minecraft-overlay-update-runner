@@ -34,7 +34,7 @@ EXCLUDED_ROOT_DIRS = frozenset(
 )
 
 
-def _valid_pack_metadata(metadata: object) -> bool:
+def _valid_pack_metadata(metadata: object) -> bool:  # noqa: PLR0911
     """Return whether metadata has a supported, non-empty format declaration."""
     if not isinstance(metadata, dict):
         return False
@@ -63,7 +63,7 @@ def _valid_pack_metadata(metadata: object) -> bool:
     return True
 
 
-def _is_pack(path: Path) -> bool:  # noqa: PLR0911
+def _is_pack(path: Path) -> bool:
     """A pack has valid metadata and a data directory."""
     if not (path / "pack.mcmeta").is_file() or not (path / "data").is_dir():
         return False
