@@ -469,8 +469,12 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901
         validate_source_map_path(source_map_path, repo, pack_root, out)
 
     if download_version:
+        if paths_overlap(cache_dir, out):
+            raise ArmourError("Cache directory and build output must not overlap")
+        if source_map_path is not None and paths_overlap(cache_dir, source_map_path):
+            raise ArmourError("Cache directory and source map must not overlap")
         jar = download_server_jar(args.server_url, args.sha1, cache_dir)
-        pack_version = read_version_json(jar).get("pack_version")
+        pack_version = read_version_json(jar).get("pack_version"
 
     result = build_flattened_pack(
         pack_root, out, data_format(pack_version), source_root=repo
