@@ -507,13 +507,16 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0915
     )
     if not cache_dir.is_absolute():
         cache_dir = repo / cache_dir
-    cache_dir = cache_dir.absolute()
-    reject_symlink_components(cache_dir, Path(cache_dir.anchor))
-    cache_dir = cache_dir.resolve()
-    if paths_overlap(cache_dir, pack_root):
-        raise ArmourError(
-            f"Cache directory must not overlap the source pack: {cache_dir}"
-        )
+    if server_jar is None:
+        cache_dir = cache_dir.absolute()
+        reject_symlink_components(cache_dir, Path(cache_dir.anchor))
+        cache_dir = cache_dir.resolve()
+        if paths_overlap(cache_dir, pack_root):
+            raise ArmourError(
+                f"Cache directory must not overlap the source pack: {cache_dir}"
+            )
+    else:
+        cache_dir = cache_dir.resolve()
     protected = (
         repo,
         pack_root,
