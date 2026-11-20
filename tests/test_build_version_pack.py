@@ -259,8 +259,9 @@ class BuildTests(TempDirTestCase):
         for name in ("tests", ".git", ".github", "build", "docs"):
             target = root / name
             write(target / "keep.txt", "keep")
-            with self.subTest(name), self.assertRaisesRegex(
-                ArmourError, "dedicated subdirectory"
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ArmourError, "dedicated subdirectory"),
             ):
                 build_version_pack.build_flattened_pack(
                     repo, target, (90, 0), source_root=root
@@ -449,7 +450,7 @@ class MainTests(TempDirTestCase):
                 mock.patch.object(
                     build_version_pack, "download_server_jar", return_value=jar
                 ),
-                self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"),
+                self.assertRaisesRegex(ArmourError, "outside the consuming repository"),
             ):
                 self.run_main(
                     "--repo",
