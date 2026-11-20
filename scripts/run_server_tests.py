@@ -519,10 +519,16 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
         cache_dir = cache_dir.absolute()
         reject_symlink_components(cache_dir, Path(cache_dir.anchor))
         cache_dir = cache_dir.resolve()
-        if paths_overlap(cache_dir, repo):
+        cache_sources = (
+            repo,
+            tests_dir,
+            HARNESS_PACK_DIR.resolve(),
+            *((server_jar,) if server_jar is not None else ()),
+        )
+        if any(paths_overlap(cache_dir, source) for source in cache_sources):
             raise ArmourError(
-                "Cache directory must be outside the consuming repository "
-                f"and staged source inputs: {cache_dir}"
+                "Cache directory must not overlap the repository or any source "
+                f"input: {cache_dir}"
             )
     else:
         cache_dir = cache_dir.resolve()
