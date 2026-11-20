@@ -304,7 +304,7 @@ class MainTests(TempDirTestCase):
         java = repo / "tools" / "java"
         java.parent.mkdir(parents=True)
         java.write_text(
-            f'#!/bin/sh\\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\\n'
+            f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\n'
         )
         java.chmod(java.stat().st_mode | stat.S_IEXEC)
         jar = self.tmp / "server.jar"
