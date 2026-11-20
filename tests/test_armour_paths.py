@@ -119,6 +119,8 @@ class ResolvePackTests(TempDirTestCase):
         for pack_metadata in (
             {},
             {"min_format": 100, "max_format": 80},
+            {"pack_format": [80, 1]},
+            {"pack_format": 80.5},
         ):
             with self.subTest(pack_metadata=pack_metadata):
                 write(
