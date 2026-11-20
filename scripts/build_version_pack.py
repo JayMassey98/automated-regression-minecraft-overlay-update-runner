@@ -153,7 +153,10 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
         value = _format_number(legacy)
         return (value, 0), (value, MINOR_INFINITY)
     if isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
-        return (_format_number(legacy[0]), 0), (_format_number(legacy[1]), MINOR_INFINITY)
+        return (
+            (_format_number(legacy[0]), 0),
+            (_format_number(legacy[1]), MINOR_INFINITY),
+        )
     if isinstance(legacy, dict):
         try:
             return (
@@ -161,7 +164,8 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
                 (_format_number(legacy["max_inclusive"]), MINOR_INFINITY),
             )
         except KeyError as error:
-            raise ArmourError(f"Unrecognised overlay formats value: {legacy!r}") from error
+            msg = f"Unrecognised overlay formats value: {legacy!r}"
+            raise ArmourError(msg) from error
     msg = f"Unrecognised overlay formats value: {legacy!r}"
     raise ArmourError(msg)
 
@@ -202,9 +206,18 @@ def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
             or ".." in path.parts
             or ":" in path.parts[0]
         ):
-            raise ArmourError(f"Overlay directory must stay inside the pack: {directory!r}")
+            msg = f"Overlay directory must stay inside the pack: {directory!r}"
+            raise ArmourError(msg)
         validated.append(entry)
     return validated
+
+
+def _reject_pack_symlinks(repo: Path) -> None:
+    """Reject symlinks anywhere in the source pack before reading or copying it."""
+    for source in repo.rglob("*"):
+        if source.is_symlink():
+            msg = f"Symbolic links are not supported in data packs: {source}"
+            raise ArmourError(msg)
 
 
 def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, str]:
@@ -234,9 +247,7 @@ def build_flattened_pack(
     """Build the plain pack for data pack format `fmt` in the (fresh) folder `out`."""
     mcmeta = load_mcmeta(repo)
     entries = overlay_entries(mcmeta)
-    for source in repo.rglob("*"):
-        if source.is_symlink():
-            raise ArmourError(f"Symbolic links are not supported in data packs: {source}")
+    _reject_pack_symlinks(repo)
     source_root = (source_root or repo).resolve()
     repo = repo.resolve()
     out = out.resolve()
@@ -346,7 +357,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             or pack_root in source_map.parents
             or source_map in pack_root.parents
         ):
-            raise ArmourError(f"Source map must not overwrite the source pack: {source_map}")
+            msg = f"Source map must not overwrite the source pack: {source_map}"
+            raise ArmourError(msg)
         if source_map == out or out in source_map.parents or source_map in out.parents:
             raise ArmourError(f"Source map must not overlap build output: {source_map}")
         source_map.parent.mkdir(parents=True, exist_ok=True)
