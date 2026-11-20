@@ -104,17 +104,10 @@ def read_version_json(jar_path: Path) -> dict[str, Any]:
 
 
 def _format_number(value: object) -> int:
-    """Convert one Minecraft format component without leaking conversion errors."""
-    fractional = isinstance(value, float) and not value.is_integer()
-    if isinstance(value, bool) or fractional:
+    """Validate one Minecraft format component as a non-negative JSON integer."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ArmourError(f"Invalid data pack format component: {value!r}")
-    try:
-        number = int(value)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise ArmourError(f"Invalid data pack format component: {value!r}") from error
-    if number < 0 or (isinstance(value, str) and str(number) != value.strip()):
-        raise ArmourError(f"Invalid data pack format component: {value!r}")
-    return number
+    return value
 
 
 def data_format(pack_version: object) -> Format:
