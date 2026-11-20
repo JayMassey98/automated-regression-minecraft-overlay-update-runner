@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from armour_common import ArmourError
+from armour_paths import validate_pack_path
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -97,8 +98,6 @@ def load(repo: Path) -> Config:
         msg = str(path) + ": pack_path must be a non-empty relative path string"
         raise ArmourError(msg)
     if pack_path is not None:
-        from armour_paths import validate_pack_path
-
         validate_pack_path(repo, pack_path)
     if len({HARNESS_NAMESPACE, pack_name, tests_namespace}) != 3:  # noqa: PLR2004
         msg = (
