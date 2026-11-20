@@ -38,7 +38,7 @@ def _configured_path(repo: Path) -> str | None:
         return None
     try:
         data = json.loads(config.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ArmourError(f"{config} is not valid UTF-8 JSON: {error}") from error
     if not isinstance(data, dict):
         raise ArmourError(f"{config} must contain a JSON object")
