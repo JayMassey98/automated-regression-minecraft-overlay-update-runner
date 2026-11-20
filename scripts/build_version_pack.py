@@ -358,6 +358,9 @@ def validate_source_map_path(path: Path, repo: Path, pack_root: Path, out: Path)
             f"below {repo}, not write into repository source files"
         )
 
+    temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(f"Source-map temporary path already exists: {temporary}")
     return source_map
 
 
@@ -366,10 +369,10 @@ def write_source_map(
 ) -> None:
     """Write the source map atomically without replacing source files."""
     source_map = validate_source_map_path(path, repo, pack_root, out)
-    source_map.parent.mkdir(parents=True, exist_ok=True)
     temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
     if temporary.exists() or temporary.is_symlink():
         raise ArmourError(f"Source-map temporary path already exists: {temporary}")
+    source_map.parent.mkdir(parents=True, exist_ok=True)
     temporary.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
     temporary.replace(source_map)
 
@@ -403,10 +406,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     """Command-line entry point."""
     args = parse_args(argv)
-    if args.pack_version is None and not (args.server_url and args.sha1):
+    download_version = args.pack_version is None
+    if download_version and not (args.server_url and args.sha1):
         raise ArmourError("Give either --server-url and --sha1, or --pack-version")
     pack_version = None
-    if args.pack_version is not None:
+    if not download_version:
         try:
             pack_version = json.loads(args.pack_version)
         except json.JSONDecodeError as error:
@@ -443,7 +447,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_map_path = source_map_path.absolute()
         validate_source_map_path(source_map_path, repo, pack_root, out)
 
-    if pack_version is None:
+    if download_version:
         jar = download_server_jar(args.server_url, args.sha1, cache_dir)
         pack_version = read_version_json(jar).get("pack_version")
 
