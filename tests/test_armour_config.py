@@ -15,6 +15,15 @@ class LoadTests(TempDirTestCase):
         self.assertEqual(config.pack_name, "my_pack")
         self.assertEqual(config.tests_namespace, "my_pack_test")
 
+    def test_optional_pack_path(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": "packs/p"}')
+        self.assertEqual(armour_config.load(self.tmp).pack_path, "packs/p")
+
+    def test_invalid_pack_path_type(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": 7}')
+        with self.assertRaisesRegex(ArmourError, "pack_path"):
+            armour_config.load(self.tmp)
+
     def test_explicit_namespace(self) -> None:
         write(
             self.tmp / "armour.json",
