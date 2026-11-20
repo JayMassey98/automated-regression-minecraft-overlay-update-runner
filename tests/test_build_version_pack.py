@@ -482,6 +482,29 @@ class MainTests(TempDirTestCase):
         self.assertEqual(external.read_text(), "keep")
         self.assertFalse((self.tmp / "out").exists())
 
+    def test_source_map_symlinked_parent_is_rejected_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        external = self.tmp / "external"
+        external.mkdir()
+        try:
+            (repo / "map-dir-link").symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(self.tmp / "out"),
+                "--source-map",
+                "map-dir-link/source-map.json",
+            )
+        self.assertFalse((self.tmp / "out").exists())
+        self.assertFalse((external / "source-map.json").exists())
+
     def test_needs_a_jar_or_a_pack_version(self) -> None:
         with self.assertRaisesRegex(ArmourError, "--pack-version"):
             self.run_main("--out", str(self.tmp / "out"))
