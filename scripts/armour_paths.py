@@ -49,6 +49,10 @@ def _valid_pack_metadata(metadata: object) -> bool:  # noqa: C901, PLR0911
         if key not in pack:
             continue
         value = pack[key]
+        if key == "pack_format" and (
+            isinstance(value, bool) or not isinstance(value, int)
+        ):
+            return False
         if isinstance(value, bool) or not isinstance(value, (int, list)):
             return False
         if isinstance(value, int) and value < 0:
