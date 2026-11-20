@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path, PurePosixPath
 
 from armour_common import ArmourError
@@ -67,7 +68,7 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
         return target
 
     candidates: list[Path] = []
-    for current, dirs, _files in __import__("os").walk(repo):
+    for current, dirs, _files in os.walk(repo):
         current_path = Path(current)
         dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_DIRS)
         if _is_pack(current_path):
