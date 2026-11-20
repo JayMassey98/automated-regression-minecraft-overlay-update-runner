@@ -99,18 +99,31 @@ def read_version_json(jar_path: Path) -> dict[str, Any]:
     raise ArmourError(msg)
 
 
+def _format_number(value: object) -> int:
+    """Convert one Minecraft format component without leaking conversion errors."""
+    if isinstance(value, bool):
+        raise ArmourError(f"Invalid data pack format component: {value!r}")
+    try:
+        number = int(value)
+    except (TypeError, ValueError, OverflowError) as error:
+        raise ArmourError(f"Invalid data pack format component: {value!r}") from error
+    if number < 0 or (isinstance(value, str) and str(number) != value.strip()):
+        raise ArmourError(f"Invalid data pack format component: {value!r}")
+    return number
+
+
 def data_format(pack_version: object) -> Format:
     """Normalise Mojang's `pack_version` into a (major, minor) data pack format."""
     if isinstance(pack_version, int) and not isinstance(pack_version, bool):
-        return (pack_version, 0)
+        return (_format_number(pack_version), 0)
     if isinstance(pack_version, dict):
         if "data_major" in pack_version:
             return (
-                int(pack_version["data_major"]),
-                int(pack_version.get("data_minor", 0)),
+                _format_number(pack_version["data_major"]),
+                _format_number(pack_version.get("data_minor", 0)),
             )
         if "data" in pack_version:
-            return (int(pack_version["data"]), 0)
+            return (_format_number(pack_version["data"]), 0)
     msg = f"Cannot work out the data pack format from {pack_version!r}"
     raise ArmourError(msg)
 
@@ -118,9 +131,9 @@ def data_format(pack_version: object) -> Format:
 def as_format(value: object, *, upper: bool) -> Format:
     """Read a `min_format`/`max_format` value; a bare integer spans every minor."""
     if isinstance(value, int) and not isinstance(value, bool):
-        return (value, MINOR_INFINITY if upper else 0)
+        return (_format_number(value), MINOR_INFINITY if upper else 0)
     if isinstance(value, list) and len(value) == _PAIR_LENGTH:
-        return (int(value[0]), int(value[1]))
+        return (_format_number(value[0]), _format_number(value[1]))
     msg = f"Unrecognised pack format value: {value!r}"
     raise ArmourError(msg)
 
@@ -137,14 +150,18 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
     if legacy is None:
         return low, high
     if isinstance(legacy, int) and not isinstance(legacy, bool):
-        return (legacy, 0), (legacy, MINOR_INFINITY)
+        value = _format_number(legacy)
+        return (value, 0), (value, MINOR_INFINITY)
     if isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
-        return (int(legacy[0]), 0), (int(legacy[1]), MINOR_INFINITY)
+        return (_format_number(legacy[0]), 0), (_format_number(legacy[1]), MINOR_INFINITY)
     if isinstance(legacy, dict):
-        return (
-            (int(legacy["min_inclusive"]), 0),
-            (int(legacy["max_inclusive"]), MINOR_INFINITY),
-        )
+        try:
+            return (
+                (_format_number(legacy["min_inclusive"]), 0),
+                (_format_number(legacy["max_inclusive"]), MINOR_INFINITY),
+            )
+        except KeyError as error:
+            raise ArmourError(f"Unrecognised overlay formats value: {legacy!r}") from error
     msg = f"Unrecognised overlay formats value: {legacy!r}"
     raise ArmourError(msg)
 
@@ -155,7 +172,11 @@ def load_mcmeta(repo: Path) -> dict[str, Any]:
     if not path.is_file():
         msg = f"{path} does not exist; is --repo the data pack's root?"
         raise ArmourError(msg)
-    return _load_json_object(path.read_text(encoding="utf-8"), str(path))
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ArmourError(f"Cannot read {path} as UTF-8: {error}") from error
+    return _load_json_object(content, str(path))
 
 
 def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -174,7 +195,13 @@ def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
         if not isinstance(directory, str) or not directory.strip():
             raise ArmourError(f"Overlay entry has no valid directory: {entry!r}")
         path = PurePosixPath(directory)
-        if path.is_absolute() or "\\" in directory or ".." in path.parts:
+        if (
+            path.is_absolute()
+            or not path.parts
+            or "\\" in directory
+            or ".." in path.parts
+            or ":" in path.parts[0]
+        ):
             raise ArmourError(f"Overlay directory must stay inside the pack: {directory!r}")
         validated.append(entry)
     return validated
@@ -207,6 +234,9 @@ def build_flattened_pack(
     """Build the plain pack for data pack format `fmt` in the (fresh) folder `out`."""
     mcmeta = load_mcmeta(repo)
     entries = overlay_entries(mcmeta)
+    for source in repo.rglob("*"):
+        if source.is_symlink():
+            raise ArmourError(f"Symbolic links are not supported in data packs: {source}")
     source_root = (source_root or repo).resolve()
     repo = repo.resolve()
     out = out.resolve()
@@ -311,7 +341,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not source_map.is_absolute():
             source_map = repo / source_map
         source_map = source_map.resolve()
-        if source_map == pack_root or pack_root in source_map.parents:
+        if (
+            source_map == pack_root
+            or pack_root in source_map.parents
+            or source_map in pack_root.parents
+        ):
             raise ArmourError(f"Source map must not overwrite the source pack: {source_map}")
         if source_map == out or out in source_map.parents or source_map in out.parents:
             raise ArmourError(f"Source map must not overlap build output: {source_map}")
