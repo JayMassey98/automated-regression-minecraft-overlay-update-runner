@@ -114,7 +114,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     config = armour_config.load(Path(args.repo).resolve())
+    repo = Path(args.repo).resolve()
     pack = Path(args.tests_dir)
+    if not pack.is_absolute():
+        pack = repo / pack
     print(f"Generated {pack}: {generate(pack, config.tests_namespace)} tests")
     return 0
 
