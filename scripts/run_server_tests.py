@@ -39,7 +39,7 @@ from armour_common import (
     download_server_jar,
     run,
 )
-from armour_paths import resolve_pack_root
+from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
 from build_version_pack import load_mcmeta, overlay_entries
 from generate_test_runner import generate
 
@@ -112,12 +112,6 @@ def _reject_symlinks(root: Path) -> None:
     for path in root.rglob("*"):
         if path.is_symlink():
             raise ArmourError(f"Symbolic links are not supported in data packs: {path}")
-
-
-def _paths_overlap(first: Path, second: Path) -> bool:
-    """Return whether either resolved path contains the other."""
-    first, second = first.resolve(), second.resolve()
-    return first == second or first in second.parents or second in first.parents
 
 
 def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
@@ -509,6 +503,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not cache_dir.is_absolute():
         cache_dir = repo / cache_dir
     cache_dir = cache_dir.resolve()
+    reject_symlink_components(work.absolute(), Path(work.anchor))
+    reject_symlink_components(cache_dir.absolute(), Path(cache_dir.anchor))
+    if paths_overlap(cache_dir, pack_root):
+        raise ArmourError(f"Cache directory must not overlap the source pack: {cache_dir}")
     protected = (
         repo,
         pack_root,
@@ -518,7 +516,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         *((server_jar,) if server_jar is not None else ()),
     )
     for source in protected:
-        if _paths_overlap(work, source):
+        if paths_overlap(work, source):
             raise ArmourError(
                 "Server work directory "
                 f"{work} must not overlap source directory {source}"
@@ -526,6 +524,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if work.exists() and not work.is_dir():
         msg = f"Server work directory exists and is not a directory: {work}"
         raise ArmourError(msg)
+    if not tests_dir.is_dir():
+        raise ArmourError(f"Tests directory does not exist: {tests_dir}")
+    _reject_symlinks(pack_root)
+    _reject_symlinks(tests_dir)
+    overlay_entries(load_mcmeta(pack_root))
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
