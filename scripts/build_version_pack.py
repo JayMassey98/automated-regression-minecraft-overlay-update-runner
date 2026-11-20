@@ -105,7 +105,8 @@ def read_version_json(jar_path: Path) -> dict[str, Any]:
 
 def _format_number(value: object) -> int:
     """Convert one Minecraft format component without leaking conversion errors."""
-    if isinstance(value, bool) or (isinstance(value, float) and not value.is_integer()):
+    fractional = isinstance(value, float) and not value.is_integer()
+    if isinstance(value, bool) or fractional:
         raise ArmourError(f"Invalid data pack format component: {value!r}")
     try:
         number = int(value)
