@@ -21,12 +21,13 @@ server tests across target versions in parallel to speed up verification.
    ```
 
 2. **Add `armour.json` to the repo root** (`tests_namespace` defaults to
-   `<pack_name>_test`):
+   `<pack_name>_test`; `pack_path` is optional):
 
    ```json
    {
      "pack_name": "elemental_tools",
-     "tests_namespace": "elemental_tools_test"
+     "tests_namespace": "elemental_tools_test",
+   "pack_path": "packs/elemental_tools"
    }
    ```
 
@@ -50,7 +51,12 @@ server tests across target versions in parallel to speed up verification.
    ```
 
    Which versions to target, the tests folder, and other options are command
-   line arguments, so every repo decides for itself. See
+   line arguments, so every repo decides for itself. `--repo` always identifies
+   the consuming repository root. ARMOUR discovers a single data pack anywhere
+   below that root; set `pack_path` in `armour.json` or pass `--pack-path` when
+   more than one pack exists. Paths in `armour.json` and relative CLI paths are
+   interpreted from the repository root, not the current working directory.
+   See
    `elemental-tools/.github/workflows/ci.yml` for a complete example.
 
 ## Updating ARMOUR
@@ -138,12 +144,19 @@ server log, which `run_server_tests.py` reads:
 
 The harness builds its own platform at `0 150 0`, so any world works.
 
-## Current Limitations
+## Data Pack Location
 
-- **Data pack must live at the repository root**: `build_version_pack.py` and
-  `run_server_tests.py` expect `pack.mcmeta`, `data/`, and any version
-  overlay folders to sit directly at the top level of the consuming repo,
-  rather than inside a subdirectory.
+The data pack may live in any subdirectory of the consuming repository. ARMOUR
+searches recursively for a directory containing a valid `pack.mcmeta` and
+`data/`. If exactly one pack is found, it is selected automatically. If
+multiple packs are found, select one with `"pack_path": "path/to/pack"` in
+`armour.json`, or pass `--pack-path path/to/pack` to the build or server-test
+script. The selected path is relative to the repository root.
+
+ARMOUR excludes its own harness, tests, generated build/server directories,
+caches, virtual environments, and dependency folders from automatic discovery.
+Build outputs and server staging are kept separate from the source pack; the
+source pack and its overlays are not modified.
 
 ## Running Unit Tests
 
