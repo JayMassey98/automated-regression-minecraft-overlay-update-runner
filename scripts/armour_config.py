@@ -50,6 +50,7 @@ class Config:
 
     pack_name: str
     tests_namespace: str
+    pack_path: str | None = None
 
 
 def _name(data: dict[str, object], key: str, path: Path) -> str | None:
@@ -89,6 +90,12 @@ def load(repo: Path) -> Config:
         msg = f'{path} must contain a "pack_name" string'
         raise ArmourError(msg)
     tests_namespace = _name(data, "tests_namespace", path) or f"{pack_name}_test"
+    pack_path = data.get("pack_path")
+    if pack_path is not None and (
+        not isinstance(pack_path, str) or not pack_path.strip()
+    ):
+        msg = str(path) + ": pack_path must be a non-empty relative path string"
+        raise ArmourError(msg)
     if len({HARNESS_NAMESPACE, pack_name, tests_namespace}) != 3:  # noqa: PLR2004
         msg = (
             f'{path}: "pack_name" ({pack_name!r}), "tests_namespace" '
@@ -96,4 +103,6 @@ def load(repo: Path) -> Config:
             f"({HARNESS_NAMESPACE!r}) must all be different"
         )
         raise ArmourError(msg)
-    return Config(pack_name=pack_name, tests_namespace=tests_namespace)
+    return Config(
+        pack_name=pack_name, tests_namespace=tests_namespace, pack_path=pack_path
+    )
