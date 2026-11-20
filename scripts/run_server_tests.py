@@ -570,11 +570,15 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             "If ARMOUR is a submodule, run git submodule update --init."
         )
     if not (tests_dir / "pack.mcmeta").is_file():
-        raise ArmourError(f"Tests pack metadata is missing: {tests_dir / 'pack.mcmeta'}")
+        raise ArmourError(
+            f"Tests pack metadata is missing: {tests_dir / 'pack.mcmeta'}"
+        )
     if server_jar is not None and not server_jar.is_file():
         raise ArmourError(f"Server jar does not exist: {server_jar}")
     if not isinstance(load_mcmeta(HARNESS_PACK_DIR).get("pack"), dict):
-        raise ArmourError(f"Harness pack metadata has no pack section: {HARNESS_PACK_DIR}")
+        raise ArmourError(
+            f"Harness pack metadata has no pack section: {HARNESS_PACK_DIR}"
+        )
     if not isinstance(load_mcmeta(tests_dir).get("pack"), dict):
         raise ArmourError(f"Tests pack metadata has no pack section: {tests_dir}")
 
