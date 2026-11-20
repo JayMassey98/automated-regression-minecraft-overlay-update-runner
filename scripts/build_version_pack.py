@@ -190,10 +190,13 @@ def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, s
     return copied
 
 
-def build_flattened_pack(repo: Path, out: Path, fmt: Format) -> BuildResult:
+def build_flattened_pack(
+    repo: Path, out: Path, fmt: Format, *, source_root: Path | None = None
+) -> BuildResult:
     """Build the plain pack for data pack format `fmt` in the (fresh) folder `out`."""
     mcmeta = load_mcmeta(repo)
     entries = overlay_entries(mcmeta)
+    source_root = (source_root or repo).resolve()
 
     if out.exists():
         shutil.rmtree(out)
@@ -205,7 +208,7 @@ def build_flattened_pack(repo: Path, out: Path, fmt: Format) -> BuildResult:
     if (repo / "spyglass.json").exists():
         shutil.copyfile(repo / "spyglass.json", out / "spyglass.json")
 
-    root_files = copy_data_tree(repo / "data", out, repo)
+    root_files = copy_data_tree(repo / "data", out, source_root)
     result.source_map.update(root_files)
     result.applied.append(f"data/ ({len(root_files)} files)")
 
@@ -221,7 +224,7 @@ def build_flattened_pack(repo: Path, out: Path, fmt: Format) -> BuildResult:
                 f"but {overlay_data} does not exist"
             )
             raise ArmourError(msg)
-        overlay_files = copy_data_tree(overlay_data, out, repo)
+        overlay_files = copy_data_tree(overlay_data, out, source_root)
         result.source_map.update(overlay_files)
         result.applied.append(f"{directory}/ ({len(overlay_files)} files)")
     return result
@@ -263,7 +266,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             msg = f"--pack-version is not valid JSON: {error}"
             raise ArmourError(msg) from error
     elif args.server_url and args.sha1:
-        jar = download_server_jar(args.server_url, args.sha1, Path(args.cache_dir))
+        repo = Path(args.repo).resolve()
+        cache_dir = Path(args.cache_dir)
+        if not cache_dir.is_absolute():
+            cache_dir = repo / cache_dir
+        jar = download_server_jar(args.server_url, args.sha1, cache_dir.resolve())
         pack_version = read_version_json(jar).get("pack_version")
     else:
         msg = "Give either --server-url and --sha1, or --pack-version"
@@ -271,12 +278,17 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo = Path(args.repo).resolve()
     pack_root = resolve_pack_root(repo, args.pack_path)
+    out = Path(args.out)
+    if not out.is_absolute():
+        out = repo / out
     result = build_flattened_pack(
-        pack_root, Path(args.out).resolve(), data_format(pack_version)
+        pack_root, out.resolve(), data_format(pack_version), source_root=repo
     )
 
     if args.source_map:
         source_map = Path(args.source_map)
+        if not source_map.is_absolute():
+            source_map = repo / source_map
         source_map.parent.mkdir(parents=True, exist_ok=True)
         source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
 
