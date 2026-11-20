@@ -33,7 +33,7 @@ EXCLUDED_ROOT_DIRS = frozenset(
 )
 
 
-def _is_pack(path: Path) -> bool:
+def _is_pack(path: Path) -> bool:  # noqa: C901, PLR0911
     """A pack has valid metadata and a data directory."""
     if not (path / "pack.mcmeta").is_file() or not (path / "data").is_dir():
         return False
@@ -57,7 +57,12 @@ def _is_pack(path: Path) -> bool:
                     return False
                 if isinstance(value, list) and (
                     len(value) != 2
-                    or any(isinstance(part, bool) or not isinstance(part, int) or part < 0 for part in value)
+                    or any(
+                        isinstance(part, bool)
+                        or not isinstance(part, int)
+                        or part < 0
+                        for part in value
+                    )
                 ):
                     return False
     except (TypeError, ValueError):
@@ -159,7 +164,9 @@ def reject_symlink_components(path: Path, base: Path) -> None:
     for part in relative.parts:
         current = current / part
         if current.is_symlink():
-            raise ArmourError(f"Symbolic links are not allowed in destination paths: {current}")
+            raise ArmourError(
+                f"Symbolic links are not allowed in destination paths: {current}"
+            )
 
 
 def paths_overlap(first: Path, second: Path) -> bool:
