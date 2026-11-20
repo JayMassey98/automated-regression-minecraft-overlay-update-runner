@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
 import shutil
 import zipfile
 from dataclasses import dataclass, field
@@ -368,6 +369,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ArmourError(msg)
         if source_map == out or out in source_map.parents or source_map in out.parents:
             raise ArmourError(f"Source map must not overlap build output: {source_map}")
+        common_parent = Path(os.path.commonpath((out.parent, source_map.parent)))
+        if common_parent == repo:
+            raise ArmourError(
+                "Source map and build output must share a dedicated output directory "
+                f"below {repo}, not write into repository source files"
+            )
         source_map.parent.mkdir(parents=True, exist_ok=True)
         source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
 
