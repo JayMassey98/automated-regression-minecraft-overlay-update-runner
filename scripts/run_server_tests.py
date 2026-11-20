@@ -502,6 +502,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
     tests_dir = Path(args.tests_dir)
     if not tests_dir.is_absolute():
         tests_dir = repo / tests_dir
+    tests_dir = tests_dir.absolute()
+    reject_symlink_components(tests_dir, Path(tests_dir.anchor))
     tests_dir = tests_dir.resolve()
     server_jar = Path(args.server_jar) if args.server_jar else None
     if server_jar is not None and not server_jar.is_absolute():
