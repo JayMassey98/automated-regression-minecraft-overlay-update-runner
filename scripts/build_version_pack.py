@@ -327,10 +327,8 @@ def build_flattened_pack(
         raise
 
 
-def write_source_map(
-    path: Path, result: BuildResult, repo: Path, pack_root: Path, out: Path
-) -> None:
-    """Write the source map without allowing it to replace source files."""
+def validate_source_map_path(path: Path, repo: Path, pack_root: Path, out: Path) -> Path:
+    """Validate and return a source-map destination without writing anything."""
     source_map = path if path.is_absolute() else repo / path
     source_map = source_map.absolute()
     reject_symlink_components(source_map, Path(source_map.anchor))
@@ -356,10 +354,19 @@ def write_source_map(
             "Source map and build output must share a dedicated output directory "
             f"below {repo}, not write into repository source files"
         )
+
+    return source_map
+
+
+def write_source_map(
+    path: Path, result: BuildResult, repo: Path, pack_root: Path, out: Path
+) -> None:
+    """Write the source map atomically without replacing source files."""
+    source_map = validate_source_map_path(path, repo, pack_root, out)
     source_map.parent.mkdir(parents=True, exist_ok=True)
     temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
-    if temporary.is_symlink():
-        raise ArmourError(f"Refusing symlinked source-map temporary file: {temporary}")
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(f"Source-map temporary path already exists: {temporary}")
     temporary.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
     temporary.replace(source_map)
 
@@ -417,9 +424,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not source_map_path.is_absolute():
             source_map_path = repo / source_map_path
         source_map_path = source_map_path.absolute()
-        reject_symlink_components(source_map_path, Path(source_map_path.anchor))
-        if paths_overlap(source_map_path, out) or paths_overlap(source_map_path, pack_root):
-            raise ArmourError("Source map must not overlap the build output or source pack")
+        validate_source_map_path(source_map_path, repo, pack_root, out)
 
     if args.pack_version is not None:
         try:
