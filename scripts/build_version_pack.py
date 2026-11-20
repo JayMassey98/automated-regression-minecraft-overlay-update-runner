@@ -315,7 +315,9 @@ def write_source_map(
     if source_map == out or out in source_map.parents or source_map in out.parents:
         raise ArmourError(f"Source map must not overlap build output: {source_map}")
     common_parent = Path(os.path.commonpath((out.parent, source_map.parent)))
-    if common_parent == repo:
+    if common_parent == repo or (
+        source_map.is_relative_to(repo) and not common_parent.is_relative_to(repo)
+    ):
         raise ArmourError(
             "Source map and build output must share a dedicated output directory "
             f"below {repo}, not write into repository source files"
