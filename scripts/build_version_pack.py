@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 
 # A bare integer upper bound such as `"max_format": 88` covers every minor
 # version of 88.
-MINOR_INFINITY = 10**9
+MINOR_INFINITY = None
 
 # A data pack format as (major, minor).
 Format = tuple[int, int]
