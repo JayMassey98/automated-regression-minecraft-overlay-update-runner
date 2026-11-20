@@ -13,12 +13,24 @@ CONFIG_FILE = "armour.json"
 # "build", "tests", etc. deeper in a consuming repository may contain the pack.
 EXCLUDED_ROOT_DIRS = frozenset(
     {
-        ".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache",
-        ".mypy_cache", ".ruff_cache", "node_modules", "build", "dist",
-        ".mc-cache", "server-run", "harness", "tests", ".armour",
+        ".git",
+        ".github",
+        ".venv",
+        "venv",
+        "__pycache__",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        "node_modules",
+        "build",
+        "dist",
+        ".mc-cache",
+        "server-run",
+        "harness",
+        "tests",
+        ".armour",
     }
 )
-
 
 
 def _is_pack(path: Path) -> bool:
