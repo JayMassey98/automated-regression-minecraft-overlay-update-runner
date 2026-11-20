@@ -159,18 +159,25 @@ def load_mcmeta(repo: Path) -> dict[str, Any]:
 
 
 def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return the overlay entries listed in a pack.mcmeta, each with a `directory`."""
-    entries = mcmeta.get("overlays", {}).get("entries", [])
+    """Validate and return the overlay entries listed in pack.mcmeta."""
+    overlays = mcmeta.get("overlays", {})
+    if not isinstance(overlays, dict):
+        raise ArmourError('"overlays" in pack.mcmeta must be an object')
+    entries = overlays.get("entries", [])
+    if not isinstance(entries, list):
+        raise ArmourError('"overlays.entries" in pack.mcmeta must be a list')
+    validated: list[dict[str, Any]] = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ArmourError(f"Overlay entry must be an object: {entry!r}")
         directory = entry.get("directory")
-        if not directory:
-            msg = f"Overlay entry has no directory: {entry!r}"
-            raise ArmourError(msg)
+        if not isinstance(directory, str) or not directory.strip():
+            raise ArmourError(f"Overlay entry has no valid directory: {entry!r}")
         path = PurePosixPath(directory)
-        if path.is_absolute() or ".." in path.parts:
-            msg = f"Overlay directory must stay inside the repo: {directory!r}"
-            raise ArmourError(msg)
-    return list(entries)
+        if path.is_absolute() or "\\" in directory or ".." in path.parts:
+            raise ArmourError(f"Overlay directory must stay inside the pack: {directory!r}")
+        validated.append(entry)
+    return validated
 
 
 def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, str]:
@@ -179,7 +186,11 @@ def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, s
     Returns {path in the flattened pack: path in the repo} for each file copied.
     """
     copied: dict[str, str] = {}
+    if not data_dir.is_dir():
+        raise ArmourError(f"Data directory does not exist: {data_dir}")
     for path in sorted(data_dir.rglob("*")):
+        if path.is_symlink():
+            raise ArmourError(f"Symbolic links are not supported in data packs: {path}")
         if not path.is_file():
             continue
         relative = path.relative_to(data_dir.parent)  # keeps the leading `data/`
@@ -197,6 +208,12 @@ def build_flattened_pack(
     mcmeta = load_mcmeta(repo)
     entries = overlay_entries(mcmeta)
     source_root = (source_root or repo).resolve()
+    repo = repo.resolve()
+    out = out.resolve()
+    if out == repo or out in repo.parents or repo in out.parents:
+        raise ArmourError(f"Build output must not overlap the source pack: {out}")
+    if out.exists() and not out.is_dir():
+        raise ArmourError(f"Build output exists and is not a directory: {out}")
 
     if out.exists():
         shutil.rmtree(out)
@@ -217,7 +234,10 @@ def build_flattened_pack(
         low, high = overlay_range(entry)
         if not low <= fmt <= high:
             continue
-        overlay_data = repo / directory / "data"
+        overlay_root = (repo / directory).resolve()
+        if not overlay_root.is_relative_to(repo):
+            raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
+        overlay_data = overlay_root / "data"
         if not overlay_data.is_dir():
             msg = (
                 f"pack.mcmeta lists overlay '{directory}' "
@@ -290,6 +310,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_map = Path(args.source_map)
         if not source_map.is_absolute():
             source_map = repo / source_map
+        source_map = source_map.resolve()
+        if source_map == pack_root or pack_root in source_map.parents:
+            raise ArmourError(f"Source map must not overwrite the source pack: {source_map}")
+        if source_map == out or out in source_map.parents or source_map in out.parents:
+            raise ArmourError(f"Source map must not overlap build output: {source_map}")
         source_map.parent.mkdir(parents=True, exist_ok=True)
         source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
 
