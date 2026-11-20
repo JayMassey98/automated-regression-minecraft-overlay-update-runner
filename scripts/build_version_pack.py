@@ -282,8 +282,15 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     if paths_overlap(out, repo):
         raise ArmourError(f"Build output must not overlap the source pack: {out}")
     protected = {
-        ".git", ".github", ".armour", "tests", "harness", ".venv",
-        "venv", "node_modules", ".mc-cache",
+        ".git",
+        ".github",
+        ".armour",
+        "tests",
+        "harness",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".mc-cache",
     }
     if any(paths_overlap(out, source_root / name) for name in protected):
         raise ArmourError(f"Build output is a protected repository directory: {out}")
