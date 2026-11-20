@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from support import TempDirTestCase, write
 
 import armour_paths
 from armour_common import ArmourError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def make_pack(path: Path) -> None:
@@ -63,7 +66,7 @@ class ResolvePackTests(TempDirTestCase):
 
     def test_rejects_traversal_and_absolute_paths(self) -> None:
         make_pack(self.tmp / "pack")
-        for value in ("../outside", "/tmp/outside"):
+        for value in ("../outside", str(self.tmp / "absolute")):
             with self.subTest(value), self.assertRaises(ArmourError):
                 armour_paths.resolve_pack_root(self.tmp, value)
 
