@@ -449,9 +449,7 @@ class MainTests(TempDirTestCase):
                 mock.patch.object(
                     build_version_pack, "download_server_jar", return_value=jar
                 ),
-                self.assertRaisesRegex(
-                    ArmourError, "Cache directory must not overlap"
-                ),
+                self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"),
             ):
                 self.run_main(
                     "--repo",
