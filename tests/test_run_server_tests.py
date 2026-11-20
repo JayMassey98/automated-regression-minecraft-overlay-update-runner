@@ -415,6 +415,26 @@ class MainTests(TempDirTestCase):
             run_server_tests.main(args)
         self.assertEqual((external / "keep.txt").read_text(), "safe")
 
+    def test_symlinked_tests_root_is_rejected(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction')
+        tests_target = self.tmp / "real-tests"
+        make_tests_pack(tests_target, "demo_test")
+        tests_link = self.tmp / "tests-link"
+        try:
+            tests_link.symlink_to(tests_target, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        args = [
+            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
+            "--sha1", "0", "--repo", str(repo), "--tests-dir", str(tests_link),
+            "--work-dir", str(self.tmp / "work"),
+        ]
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            run_server_tests.main(args)
+
     def test_default_work_directory_is_a_sibling_of_repo(self) -> None:
         code, printed = self.run_main("passes", default_work_dir=True)
         self.assertEqual(code, 0, printed)
