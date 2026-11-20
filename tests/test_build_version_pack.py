@@ -277,7 +277,8 @@ class MainTests(TempDirTestCase):
     def test_source_map_cannot_overwrite_pack_metadata(self) -> None:
         repo = self.tmp / "repo"
         pack = make_repo(repo / "packs" / "pack")
-        write(repo / "armour.json", json.dumps({"pack_name": "p", "pack_path": "packs/pack"}))
+        config = {"pack_name": "p", "pack_path": "packs/pack"}
+        write(repo / "armour.json", json.dumps(config))
         before = (pack / "pack.mcmeta").read_text(encoding="utf-8")
         with self.assertRaisesRegex(ArmourError, "must not overwrite the source pack"):
             self.run_main(
