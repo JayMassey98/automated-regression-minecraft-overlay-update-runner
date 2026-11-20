@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from typing import TYPE_CHECKING
 
 from support import TempDirTestCase, write
@@ -58,10 +59,6 @@ class ResolvePackTests(TempDirTestCase):
                 root = self.tmp / folder
                 make_pack(root)
                 self.assertEqual(armour_paths.resolve_pack_root(self.tmp), root.resolve())
-                for child in sorted(root.parents, reverse=True):
-                    if child != self.tmp:
-                        pass
-                import shutil
                 shutil.rmtree(root)
     
     def test_ambiguous_packs_give_actionable_error(self) -> None:
