@@ -41,7 +41,7 @@ from armour_common import (
     download_server_jar,
     run,
 )
-from armour_paths import resolve_pack_root
+from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -160,19 +160,21 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
         value = _format_number(legacy)
         return (value, 0), (value, MINOR_INFINITY)
     if isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
-        return (
-            (_format_number(legacy[0]), 0),
-            (_format_number(legacy[1]), MINOR_INFINITY),
-        )
-    if isinstance(legacy, dict):
+        legacy_low = (_format_number(legacy[0]), 0)
+        legacy_high = (_format_number(legacy[1]), MINOR_INFINITY)
+    elif isinstance(legacy, dict):
         try:
-            return (
-                (_format_number(legacy["min_inclusive"]), 0),
-                (_format_number(legacy["max_inclusive"]), MINOR_INFINITY),
-            )
+            legacy_low = (_format_number(legacy["min_inclusive"]), 0)
+            legacy_high = (_format_number(legacy["max_inclusive"]), MINOR_INFINITY)
         except KeyError as error:
             msg = f"Unrecognised overlay formats value: {legacy!r}"
             raise ArmourError(msg) from error
+    else:
+        msg = f"Unrecognised overlay formats value: {legacy!r}"
+        raise ArmourError(msg)
+    if legacy_low > legacy_high:
+        raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
+    return legacy_low, legacy_high
     msg = f"Unrecognised overlay formats value: {legacy!r}"
     raise ArmourError(msg)
 
@@ -248,54 +250,86 @@ def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, s
     return copied
 
 
-def build_flattened_pack(
-    repo: Path, out: Path, fmt: Format, *, source_root: Path | None = None
-) -> BuildResult:
-    """Build the plain pack for data pack format `fmt` in the (fresh) folder `out`."""
-    mcmeta = load_mcmeta(repo)
-    entries = overlay_entries(mcmeta)
-    _reject_pack_symlinks(repo)
-    source_root = (source_root or repo).resolve()
+def validate_overlay_sources(repo: Path, entries: list[dict[str, Any]]) -> None:
+    """Validate all overlay paths and metadata before modifying build output."""
     repo = repo.resolve()
-    out = out.resolve()
-    if out == repo or out in repo.parents or repo in out.parents:
-        raise ArmourError(f"Build output must not overlap the source pack: {out}")
-    if out.exists() and not out.is_dir():
-        raise ArmourError(f"Build output exists and is not a directory: {out}")
-
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
-    result = BuildResult(fmt=fmt)
-
-    shutil.copyfile(repo / "pack.mcmeta", out / "pack.mcmeta")
-    # spyglass.json (lint rules) travels with the pack so Spyglass picks it up.
-    if (repo / "spyglass.json").exists():
-        shutil.copyfile(repo / "spyglass.json", out / "spyglass.json")
-
-    root_files = copy_data_tree(repo / "data", out, source_root)
-    result.source_map.update(root_files)
-    result.applied.append(f"data/ ({len(root_files)} files)")
-
     for entry in entries:
         directory = entry["directory"]
-        low, high = overlay_range(entry)
-        if not low <= fmt <= high:
-            continue
         overlay_root = (repo / directory).resolve()
         if not overlay_root.is_relative_to(repo):
             raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
-        overlay_data = overlay_root / "data"
-        if not overlay_data.is_dir():
-            msg = (
-                f"pack.mcmeta lists overlay '{directory}' "
-                f"but {overlay_data} does not exist"
+        if not (overlay_root / "data").is_dir():
+            raise ArmourError(
+                f"pack.mcmeta lists overlay '{directory}' but {overlay_root / 'data'} does not exist"
             )
-            raise ArmourError(msg)
-        overlay_files = copy_data_tree(overlay_data, out, source_root)
-        result.source_map.update(overlay_files)
-        result.applied.append(f"{directory}/ ({len(overlay_files)} files)")
-    return result
+        _reject_pack_symlinks(overlay_root)
+
+
+def build_flattened_pack(
+    repo: Path, out: Path, fmt: Format, *, source_root: Path | None = None
+) -> BuildResult:
+    """Build to a temporary sibling, preserving the last successful output."""
+    mcmeta = load_mcmeta(repo)
+    entries = overlay_entries(mcmeta)
+    for entry in entries:
+        overlay_range(entry)
+    _reject_pack_symlinks(repo)
+    validate_overlay_sources(repo, entries)
+    source_root = (source_root or repo).resolve()
+    repo = repo.resolve()
+    out = out.absolute()
+    reject_symlink_components(out, Path(out.anchor))
+    out = out.resolve()
+    if paths_overlap(out, repo):
+        raise ArmourError(f"Build output must not overlap the source pack: {out}")
+    protected = {".git", ".github", ".armour", "tests", "harness", ".venv",
+                 "venv", "node_modules", ".mc-cache"}
+    if out.parent == source_root and out.name in protected:
+        raise ArmourError(f"Build output is a protected repository directory: {out}")
+    if out.exists() and not out.is_dir():
+        raise ArmourError(f"Build output exists and is not a directory: {out}")
+
+    temp = out.with_name(f".{out.name}.armour-tmp")
+    backup = out.with_name(f".{out.name}.armour-backup")
+    for candidate in (temp, backup):
+        reject_symlink_components(candidate, Path(candidate.anchor))
+        if candidate.exists():
+            if candidate.is_dir() and not candidate.is_symlink():
+                shutil.rmtree(candidate)
+            else:
+                raise ArmourError(f"Refusing to replace non-directory path: {candidate}")
+
+    temp.mkdir(parents=True)
+    backup_created = False
+    try:
+        result = BuildResult(fmt=fmt)
+        shutil.copyfile(repo / "pack.mcmeta", temp / "pack.mcmeta")
+        if (repo / "spyglass.json").exists():
+            shutil.copyfile(repo / "spyglass.json", temp / "spyglass.json")
+        root_files = copy_data_tree(repo / "data", temp, source_root)
+        result.source_map.update(root_files)
+        result.applied.append(f"data/ ({len(root_files)} files)")
+        for entry in entries:
+            directory = entry["directory"]
+            low, high = overlay_range(entry)
+            if low <= fmt <= high:
+                overlay_root = (repo / directory).resolve()
+                overlay_files = copy_data_tree(overlay_root / "data", temp, source_root)
+                result.source_map.update(overlay_files)
+                result.applied.append(f"{directory}/ ({len(overlay_files)} files)")
+        if out.exists():
+            out.rename(backup)
+            backup_created = True
+        temp.rename(out)
+        if backup_created:
+            shutil.rmtree(backup)
+        return result
+    except Exception:
+        if temp.exists():
+            shutil.rmtree(temp, ignore_errors=True)
+        if backup_created and backup.exists() and not out.exists():
+            backup.rename(out)
+        raise
 
 
 def write_source_map(
@@ -303,6 +337,8 @@ def write_source_map(
 ) -> None:
     """Write the source map without allowing it to replace source files."""
     source_map = path if path.is_absolute() else repo / path
+    source_map = source_map.absolute()
+    reject_symlink_components(source_map, Path(source_map.anchor))
     source_map = source_map.resolve()
     if (
         source_map == pack_root
@@ -326,7 +362,11 @@ def write_source_map(
             f"below {repo}, not write into repository source files"
         )
     source_map.parent.mkdir(parents=True, exist_ok=True)
-    source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+    temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+    if temporary.is_symlink():
+        raise ArmourError(f"Refusing symlinked source-map temporary file: {temporary}")
+    temporary.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+    temporary.replace(source_map)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -360,34 +400,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     repo = Path(args.repo).resolve()
 
+    pack_root = resolve_pack_root(repo, args.pack_path)
+    cache_dir = Path(args.cache_dir)
+    if not cache_dir.is_absolute():
+        cache_dir = repo / cache_dir
+    cache_dir = cache_dir.absolute()
+    reject_symlink_components(cache_dir, Path(cache_dir.anchor))
+    cache_dir = cache_dir.resolve()
+    if paths_overlap(cache_dir, pack_root):
+        raise ArmourError(f"Cache directory must not overlap the source pack: {cache_dir}")
+
+    out = Path(args.out)
+    if not out.is_absolute():
+        out = repo / out
+    out = out.absolute()
+    reject_symlink_components(out, Path(out.anchor))
+    out = out.resolve()
+    source_map_path = None
+    if args.source_map:
+        source_map_path = Path(args.source_map)
+        if not source_map_path.is_absolute():
+            source_map_path = repo / source_map_path
+        source_map_path = source_map_path.absolute()
+        reject_symlink_components(source_map_path, Path(source_map_path.anchor))
+        if paths_overlap(source_map_path, out) or paths_overlap(source_map_path, pack_root):
+            raise ArmourError("Source map must not overlap the build output or source pack")
+
     if args.pack_version is not None:
         try:
             pack_version = json.loads(args.pack_version)
         except json.JSONDecodeError as error:
-            msg = f"--pack-version is not valid JSON: {error}"
-            raise ArmourError(msg) from error
+            raise ArmourError(f"--pack-version is not valid JSON: {error}") from error
     elif args.server_url and args.sha1:
-        repo = Path(args.repo).resolve()
-        cache_dir = Path(args.cache_dir)
-        if not cache_dir.is_absolute():
-            cache_dir = repo / cache_dir
-        jar = download_server_jar(args.server_url, args.sha1, cache_dir.resolve())
+        jar = download_server_jar(args.server_url, args.sha1, cache_dir)
         pack_version = read_version_json(jar).get("pack_version")
     else:
-        msg = "Give either --server-url and --sha1, or --pack-version"
-        raise ArmourError(msg)
+        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
 
-    pack_root = resolve_pack_root(repo, args.pack_path)
-    out = Path(args.out)
-    if not out.is_absolute():
-        out = repo / out
-    out = out.resolve()
-    result = build_flattened_pack(
-        pack_root, out, data_format(pack_version), source_root=repo
-    )
-
-    if args.source_map:
-        write_source_map(Path(args.source_map), result, repo, pack_root, out)
+    result = build_flattened_pack(pack_root, out, data_format(pack_version), source_root=repo)
+    if source_map_path is not None:
+        write_source_map(source_map_path, result, repo, pack_root, out)
 
     label = f"{result.fmt[0]}.{result.fmt[1]}"
     applied = " + ".join(result.applied)
