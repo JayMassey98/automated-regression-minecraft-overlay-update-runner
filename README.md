@@ -153,10 +153,13 @@ multiple packs are found, select one with `"pack_path": "path/to/pack"` in
 `armour.json`, or pass `--pack-path path/to/pack` to the build or server-test
 script. The selected path is relative to the repository root.
 
-ARMOUR excludes its own harness, tests, generated build/server directories,
-caches, virtual environments, and dependency folders from automatic discovery.
-Build outputs and server staging are kept separate from the source pack; the
-source pack and its overlays are not modified.
+Automatic discovery excludes known tooling and generated directories only at
+the repository root; similarly named folders deeper in the project remain
+searchable. An explicit or configured path is checked to remain inside the
+repository. Build outputs must not overlap the source pack, and server work
+directories must be outside the consuming repository and all staged inputs.
+Source-pack symlinks are rejected so staging cannot follow paths outside the
+pack. Neither workflow modifies the source pack or its overlays.
 
 ## Running Unit Tests
 
