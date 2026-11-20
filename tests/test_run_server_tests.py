@@ -382,7 +382,7 @@ class MainTests(TempDirTestCase):
             "--work-dir",
             str(self.tmp / "work"),
         ]
-        with self.assertRaisesRegex(ArmourError, "Cache directory must not overlap"):
+        with self.assertRaisesRegex(ArmourError, "must not overlap the repository"):
             run_server_tests.main(args)
         self.assertTrue((pack / "pack.mcmeta").is_file())
         self.assertFalse((pack / "cache").exists())
