@@ -477,8 +477,14 @@ class MainTests(TempDirTestCase):
             self.skipTest("symlinks are unavailable")
         with self.assertRaisesRegex(ArmourError, "Symbolic links"):
             self.run_main(
-                "--repo", str(repo), "--pack-version", "90",
-                "--out", str(self.tmp / "out"), "--source-map", "map-link.json",
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(self.tmp / "out"),
+                "--source-map",
+                "map-link.json",
             )
         self.assertEqual(external.read_text(), "keep")
         self.assertFalse((self.tmp / "out").exists())
