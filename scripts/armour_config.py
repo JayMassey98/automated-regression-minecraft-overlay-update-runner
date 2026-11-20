@@ -78,7 +78,7 @@ def load(repo: Path) -> Config:
         raise ArmourError(msg)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         msg = f"{path} is not valid JSON: {error}"
         raise ArmourError(msg) from error
     if not isinstance(data, dict):
@@ -96,6 +96,10 @@ def load(repo: Path) -> Config:
     ):
         msg = str(path) + ": pack_path must be a non-empty relative path string"
         raise ArmourError(msg)
+    if pack_path is not None:
+        from armour_paths import validate_pack_path
+
+        validate_pack_path(repo, pack_path)
     if len({HARNESS_NAMESPACE, pack_name, tests_namespace}) != 3:  # noqa: PLR2004
         msg = (
             f'{path}: "pack_name" ({pack_name!r}), "tests_namespace" '
