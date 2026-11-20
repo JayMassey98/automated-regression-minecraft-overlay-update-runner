@@ -41,7 +41,28 @@ def _is_pack(path: Path) -> bool:
         metadata = json.loads((path / "pack.mcmeta").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
-    return isinstance(metadata, dict) and isinstance(metadata.get("pack"), dict)
+    pack = metadata.get("pack") if isinstance(metadata, dict) else None
+    if not isinstance(pack, dict):
+        return False
+    # Reject empty or structurally meaningless pack metadata.
+    if not any(key in pack for key in ("pack_format", "min_format", "max_format")):
+        return False
+    try:
+        for key in ("pack_format", "min_format", "max_format"):
+            if key in pack:
+                value = pack[key]
+                if isinstance(value, bool) or not isinstance(value, (int, list)):
+                    return False
+                if isinstance(value, int) and value < 0:
+                    return False
+                if isinstance(value, list) and (
+                    len(value) != 2
+                    or any(isinstance(part, bool) or not isinstance(part, int) or part < 0 for part in value)
+                ):
+                    return False
+    except (TypeError, ValueError):
+        return False
+    return True
 
 
 def _configured_path(repo: Path) -> str | None:
@@ -123,3 +144,25 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
         f"Found multiple data packs under {repo}: {locations}. "
         "Set pack_path in armour.json or pass --pack-path to select one."
     )
+
+
+
+def reject_symlink_components(path: Path, base: Path) -> None:
+    """Reject symlink components below a known, resolved base directory."""
+    base = base.resolve()
+    candidate = path if path.is_absolute() else base / path
+    try:
+        relative = candidate.relative_to(base)
+    except ValueError as error:
+        raise ArmourError(f"Path must be inside {base}: {candidate}") from error
+    current = base
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ArmourError(f"Symbolic links are not allowed in destination paths: {current}")
+
+
+def paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether either resolved path contains the other."""
+    first, second = first.resolve(), second.resolve()
+    return first == second or first in second.parents or second in first.parents
