@@ -25,7 +25,7 @@ class LoadTests(TempDirTestCase):
             armour_config.load(self.tmp)
 
     def test_invalid_utf8_is_a_clean_error(self) -> None:
-        (self.tmp / "armour.json").write_bytes(b"\\xff")
+        (self.tmp / "armour.json").write_bytes(bytes([255]))
         with self.assertRaisesRegex(ArmourError, "UTF-8"):
             armour_config.load(self.tmp)
 
