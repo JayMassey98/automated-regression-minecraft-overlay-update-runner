@@ -520,7 +520,9 @@ class MainTests(TempDirTestCase):
         for source_map in ("map-directory", "map-parent/source-map.json"):
             with self.subTest(source_map=source_map):
                 out = self.tmp / f"out-{source_map.split('/')[0]}"
-                with self.assertRaisesRegex(ArmourError, "Source map|Source-map parent"):
+                with self.assertRaisesRegex(
+                    ArmourError, "Source map|Source-map parent"
+                ):
                     self.run_main(
                         "--repo",
                         str(repo),
