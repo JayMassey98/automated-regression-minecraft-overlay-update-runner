@@ -274,7 +274,10 @@ class BuildTests(TempDirTestCase):
         except OSError:
             self.skipTest("symlinks are unavailable")
         for out in (self.tmp / "out-link", self.tmp / "parent-link" / "other"):
-            with self.subTest(out), self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            with (
+                self.subTest(out),
+                self.assertRaisesRegex(ArmourError, "Symbolic links"),
+            ):
                 build_version_pack.build_flattened_pack(repo, out, (90, 0))
         self.assertEqual((external / "keep.txt").read_text(), "safe")
 
