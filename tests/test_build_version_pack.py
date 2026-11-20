@@ -253,13 +253,15 @@ class BuildTests(TempDirTestCase):
         self.assertEqual((out / "previous-success.txt").read_text(), "keep")
 
     def test_protected_repository_output_is_rejected(self) -> None:
-        repo = make_repo(self.tmp / "repo" / "packs" / "source")
-        root = repo.parents[1]
+        root = self.tmp / "repo"
+        repo = make_repo(root / "packs" / "source")
         for name in ("tests", ".git", ".github"):
             target = root / name
             write(target / "keep.txt", "keep")
             with self.subTest(name), self.assertRaisesRegex(ArmourError, "protected"):
-                build_version_pack.build_flattened_pack(repo, target, (90, 0))
+                build_version_pack.build_flattened_pack(
+                    repo, target, (90, 0), source_root=root
+                )
             self.assertEqual((target / "keep.txt").read_text(), "keep")
 
     def test_symlinked_output_and_parent_are_rejected(self) -> None:
