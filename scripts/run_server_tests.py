@@ -509,10 +509,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     for source in protected:
         if _paths_overlap(work, source):
             raise ArmourError(
-                f"Server work directory {work} must not overlap source directory {source}"
+                "Server work directory "
+                f"{work} must not overlap source directory {source}"
             )
     if work.exists() and not work.is_dir():
-        raise ArmourError(f"Server work directory exists and is not a directory: {work}")
+        msg = f"Server work directory exists and is not a directory: {work}"
+        raise ArmourError(msg)
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
