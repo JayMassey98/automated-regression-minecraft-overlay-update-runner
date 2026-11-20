@@ -258,12 +258,13 @@ def validate_overlay_sources(repo: Path, entries: list[dict[str, Any]]) -> None:
             raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
         if not (overlay_root / "data").is_dir():
             raise ArmourError(
-                f"pack.mcmeta lists overlay '{directory}' but {overlay_root / 'data'} does not exist"
+                f"pack.mcmeta lists overlay '{directory}' but "
+                f"{overlay_root / 'data'} does not exist"
             )
         _reject_pack_symlinks(overlay_root)
 
 
-def build_flattened_pack(
+def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     repo: Path, out: Path, fmt: Format, *, source_root: Path | None = None
 ) -> BuildResult:
     """Build to a temporary sibling, preserving the last successful output."""
@@ -292,7 +293,9 @@ def build_flattened_pack(
     for candidate in (temp, backup):
         reject_symlink_components(candidate, Path(candidate.anchor))
         if candidate.exists():
-            raise ArmourError(f"Temporary build path already exists; refusing cleanup: {candidate}")
+            raise ArmourError(
+                f"Temporary build path already exists; refusing cleanup: {candidate}"
+            )
 
     temp.mkdir(parents=True)
     backup_created = False
@@ -383,7 +386,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--server-url", help="Mojang server.jar URL for this version")
     parser.add_argument("--sha1", help="expected SHA-1 of the server jar")
     parser.add_argument(
-        "--cache-dir", default=".mc-cache", help="where server jars are cached"
+        "--cache-dir", help="where server jars are cached (defaults to a sibling cache)"
     )
     parser.add_argument(
         "--pack-version", help="testing only: pack_version JSON instead of downloading"
@@ -403,14 +406,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo = Path(args.repo).resolve()
 
     pack_root = resolve_pack_root(repo, args.pack_path)
-    cache_dir = Path(args.cache_dir)
+    cache_dir = (
+        Path(args.cache_dir)
+        if args.cache_dir is not None
+        else repo.parent / f".{repo.name}-mc-cache"
+    )
     if not cache_dir.is_absolute():
         cache_dir = repo / cache_dir
     cache_dir = cache_dir.absolute()
     reject_symlink_components(cache_dir, Path(cache_dir.anchor))
     cache_dir = cache_dir.resolve()
     if paths_overlap(cache_dir, pack_root):
-        raise ArmourError(f"Cache directory must not overlap the source pack: {cache_dir}")
+        raise ArmourError(
+            f"Cache directory must not overlap the source pack: {cache_dir}"
+        )
 
     out = Path(args.out)
     if not out.is_absolute():
@@ -426,6 +435,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         source_map_path = source_map_path.absolute()
         validate_source_map_path(source_map_path, repo, pack_root, out)
 
+    if args.pack_version is None and not (args.server_url and args.sha1):
+        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
     if args.pack_version is not None:
         try:
             pack_version = json.loads(args.pack_version)
@@ -437,7 +448,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         raise ArmourError("Give either --server-url and --sha1, or --pack-version")
 
-    result = build_flattened_pack(pack_root, out, data_format(pack_version), source_root=repo)
+    result = build_flattened_pack(
+        pack_root, out, data_format(pack_version), source_root=repo
+    )
     if source_map_path is not None:
         write_source_map(source_map_path, result, repo, pack_root, out)
 
