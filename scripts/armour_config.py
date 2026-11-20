@@ -78,7 +78,7 @@ def load(repo: Path) -> Config:
         raise ArmourError(msg)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         msg = f"{path} is not valid JSON: {error}"
         raise ArmourError(msg) from error
     if not isinstance(data, dict):
