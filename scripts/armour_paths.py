@@ -35,7 +35,7 @@ EXCLUDED_ROOT_DIRS = frozenset(
 )
 
 
-def _valid_pack_metadata(metadata: object) -> bool:  # noqa: PLR0911
+def _valid_pack_metadata(metadata: object) -> bool:  # noqa: C901  # noqa: PLR0911
     """Return whether metadata has a supported, non-empty format declaration."""
     if not isinstance(metadata, dict):
         return False
