@@ -107,6 +107,19 @@ def widen_max_format(mcmeta_path: Path) -> None:
     mcmeta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _reject_symlinks(root: Path) -> None:
+    """Reject source symlinks so staging cannot read outside the source tree."""
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ArmourError(f"Symbolic links are not supported in data packs: {path}")
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether either resolved path contains the other."""
+    first, second = first.resolve(), second.resolve()
+    return first == second or first in second.parents or second in first.parents
+
+
 def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     """Copy the shipped pack: pack.mcmeta, data/, and every overlay folder.
 
@@ -115,18 +128,22 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     max_format.
     """
     entries = overlay_entries(load_mcmeta(repo))
+    _reject_symlinks(repo)
     destination.mkdir(parents=True)
     shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
     shutil.copytree(repo / "data", destination / "data")
     for entry in entries:
         directory = entry["directory"]
-        if not (repo / directory).is_dir():
+        overlay_root = (repo / directory).resolve()
+        if not overlay_root.is_relative_to(repo.resolve()):
+            raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
+        if not overlay_root.is_dir():
             msg = (
                 f"pack.mcmeta lists overlay '{directory}' "
-                f"but {repo / directory} does not exist"
+                f"but {overlay_root} does not exist"
             )
             raise ArmourError(msg)
-        shutil.copytree(repo / directory, destination / directory)
+        shutil.copytree(overlay_root, destination / directory)
     if widen:
         widen_max_format(destination / "pack.mcmeta")
 
@@ -471,6 +488,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not work_dir.is_absolute()
         else work_dir.resolve()
     )
+    tests_dir = Path(args.tests_dir)
+    if not tests_dir.is_absolute():
+        tests_dir = repo / tests_dir
+    tests_dir = tests_dir.resolve()
+    protected = (repo, pack_root, tests_dir, HARNESS_PACK_DIR.resolve())
+    for source in protected:
+        if _paths_overlap(work, source):
+            raise ArmourError(
+                f"Server work directory {work} must not overlap source directory {source}"
+            )
+    if work.exists() and not work.is_dir():
+        raise ArmourError(f"Server work directory exists and is not a directory: {work}")
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
@@ -491,19 +520,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot"
     )
     stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
-    tests_dir = Path(args.tests_dir)
-    if not tests_dir.is_absolute():
-        tests_dir = repo / tests_dir
     test_count = stage_tests_pack(
-        tests_dir.resolve(),
+        tests_dir,
         datapacks / config.tests_namespace,
         config.tests_namespace,
     )
     write_server_files(work, config.pack_name, config.tests_namespace)
     print(f"Staged the data pack and {test_count} tests for Minecraft {args.version}")
 
+    java = args.java
+    if ("/" in java or "\\" in java) and not Path(java).is_absolute():
+        java = str((repo / java).resolve())
     lines, problem = run_tests_on_server(
-        [args.java, JAVA_HEAP, "-jar", str(jar), "nogui"],
+        [java, JAVA_HEAP, "-jar", str(jar), "nogui"],
         work,
         armour_config.START_COMMAND,
         startup_timeout=args.startup_timeout,
