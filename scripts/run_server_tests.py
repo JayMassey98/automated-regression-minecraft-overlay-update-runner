@@ -466,9 +466,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     datapacks = work / "world" / "datapacks"
     datapacks.mkdir(parents=True)
 
+    server_jar = Path(args.server_jar) if args.server_jar else None
+    if server_jar is not None and not server_jar.is_absolute():
+        server_jar = repo / server_jar
     jar = (
-        Path(args.server_jar)
-        if args.server_jar
+        server_jar
+        if server_jar is not None
         else download_server_jar(
             args.server_url, args.sha1,
             ((repo / args.cache_dir).resolve() if not Path(args.cache_dir).is_absolute() else Path(args.cache_dir).resolve())
