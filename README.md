@@ -58,9 +58,9 @@ server tests across target versions in parallel to speed up verification.
    build and server-test scripts are interpreted from the repository root, not
    the current working directory. The version-discovery script's local
    `--manifest` path is relative to the current working directory; URLs are
-   unaffected. The server runner's default work directory is a hidden sibling
-   of the repository; any explicit `--work-dir` must also be outside the
-   repository and staged inputs.
+   unaffected. The server runner's default work directory and default server-JAR cache are
+   hidden siblings of the repository; any explicit `--work-dir` must also be
+   outside the repository and staged inputs.
    See
    `elemental-tools/.github/workflows/ci.yml` for a complete example.
 
@@ -161,9 +161,10 @@ script. The selected path is relative to the repository root.
 Automatic discovery excludes known tooling and generated directories only at
 the repository root; similarly named folders deeper in the project remain
 searchable. An explicit or configured path is checked to remain inside the
-repository. Build outputs must not overlap the source pack or protected repository
-directories; cache directories must not overlap the source pack. Destructive
-build and server-work destinations reject symlinked path components. Builds are
+repository. Build outputs inside the consuming repository must use a dedicated
+subdirectory of `build/`; external output directories are also supported.
+Cache directories must not overlap the source pack. Destructive build and
+server-work destinations reject symlinked path components. Builds are
 prepared in a temporary sibling directory and replace the previous output only
 after validation and copying succeed. Source-pack symlinks are rejected so
 staging cannot follow paths outside the pack. Neither workflow modifies the
