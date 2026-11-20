@@ -46,6 +46,24 @@ class ResolvePackTests(TempDirTestCase):
             (self.tmp / "packs/b").resolve(),
         )
 
+    def test_nested_pack_inside_pack_is_not_hidden(self) -> None:
+        make_pack(self.tmp)
+        make_pack(self.tmp / "nested")
+        with self.assertRaisesRegex(ArmourError, "multiple data packs"):
+            armour_paths.resolve_pack_root(self.tmp)
+
+    def test_pack_under_directory_named_build_or_tests_is_discovered(self) -> None:
+        for folder in ("packs/build", "content/tests", "examples/dist", "resources/harness"):
+            with self.subTest(folder):
+                root = self.tmp / folder
+                make_pack(root)
+                self.assertEqual(armour_paths.resolve_pack_root(self.tmp), root.resolve())
+                for child in sorted(root.parents, reverse=True):
+                    if child != self.tmp:
+                        pass
+                import shutil
+                shutil.rmtree(root)
+    
     def test_ambiguous_packs_give_actionable_error(self) -> None:
         make_pack(self.tmp / "packs/a")
         make_pack(self.tmp / "packs/b")
@@ -69,6 +87,16 @@ class ResolvePackTests(TempDirTestCase):
         for value in ("../outside", str(self.tmp / "absolute")):
             with self.subTest(value), self.assertRaises(ArmourError):
                 armour_paths.resolve_pack_root(self.tmp, value)
+
+    def test_empty_configured_path_is_rejected(self) -> None:
+        write(self.tmp / "armour.json", json.dumps({"pack_path": ""}))
+        with self.assertRaisesRegex(ArmourError, "non-empty relative"):
+            armour_paths.resolve_pack_root(self.tmp)
+
+    def test_invalid_utf8_config_is_a_clean_error(self) -> None:
+        (self.tmp / "armour.json").write_bytes(b"\\xff")
+        with self.assertRaisesRegex(ArmourError, "UTF-8"):
+            armour_paths.resolve_pack_root(self.tmp)
 
     def test_invalid_configured_pack_is_reported(self) -> None:
         write(self.tmp / "armour.json", json.dumps({"pack_path": "missing"}))
