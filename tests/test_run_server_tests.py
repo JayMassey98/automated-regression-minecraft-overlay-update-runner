@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 FAKE_SERVER = TESTS / "fake_server.py"
+START = "function armour:harness/start"
 
 
 def fast_pauses() -> AbstractContextManager[object]:
@@ -74,9 +75,9 @@ class StageTests(TempDirTestCase):
             (out / "data/demo_test/function/harness/run_tests.mcfunction").is_file()
         )
 
-    def test_server_properties_enable_all_three_packs(self) -> None:
+    def test_server_properties_enable_the_given_packs(self) -> None:
         text = run_server_tests.SERVER_PROPERTIES.format(
-            pack_name="demo", tests_namespace="demo_test"
+            enabled_packs="file/armour,file/demo,file/demo_test"
         )
         self.assertIn(
             "initial-enabled-packs=vanilla,file/armour,file/demo,file/demo_test\n",
@@ -84,10 +85,20 @@ class StageTests(TempDirTestCase):
         )
         self.assertIn(f"server-port={run_server_tests.SERVER_PORT}\n", text)
 
-    def test_write_server_files(self) -> None:
-        run_server_tests.write_server_files(self.tmp, "demo", "demo_test")
+    def test_write_server_files_enables_the_packs_in_order(self) -> None:
+        run_server_tests.write_server_files(self.tmp, ["armour", "demo", "demo_test"])
         self.assertEqual((self.tmp / "eula.txt").read_text(), "eula=true\n")
-        self.assertIn("file/demo_test", (self.tmp / "server.properties").read_text())
+        self.assertIn(
+            "initial-enabled-packs=vanilla,file/armour,file/demo,file/demo_test\n",
+            (self.tmp / "server.properties").read_text(),
+        )
+
+    def test_write_server_files_with_only_the_data_pack(self) -> None:
+        run_server_tests.write_server_files(self.tmp, ["demo"])
+        self.assertIn(
+            "initial-enabled-packs=vanilla,file/demo\n",
+            (self.tmp / "server.properties").read_text(),
+        )
 
     def test_widen_max_format_needs_a_pack_section(self) -> None:
         write(self.tmp / "pack.mcmeta", "{}")
@@ -187,13 +198,15 @@ class AnalyseTests(unittest.TestCase):
 
 
 class RunTestsOnServerTests(TempDirTestCase):
-    def run_mode(self, mode: str, **timeouts: float) -> tuple[list[str], str | None]:
+    def run_mode(
+        self, mode: str, *, start_command: str | None = START, **timeouts: float
+    ) -> tuple[list[str], str | None]:
         command = [sys.executable, str(FAKE_SERVER), mode]
         with fast_pauses():
             return run_server_tests.run_tests_on_server(
                 command,
                 self.tmp,
-                "function armour:harness/start",
+                start_command,
                 startup_timeout=timeouts.get("startup", 10),
                 test_timeout=timeouts.get("test", 10),
             )
@@ -221,16 +234,63 @@ class RunTestsOnServerTests(TempDirTestCase):
         # The `datapack list` diagnostic reply is captured too.
         self.assertTrue(any("data packs enabled" in line for line in lines))
 
+    def test_load_only_run_does_not_start_any_tests(self) -> None:
+        lines, problem = self.run_mode("passes", start_command=None)
+        self.assertIsNone(problem)
+        self.assertTrue(any("Done (" in line for line in lines))
+        # The fake server only reports a result when it is told to start tests.
+        self.assertFalse(any("ARMOUR_RESULT" in line for line in lines))
+
+    def test_load_only_run_does_not_wait_for_a_result(self) -> None:
+        _, problem = self.run_mode("silent", start_command=None, test=0.3)
+        self.assertIsNone(problem)
+
+    def test_load_only_server_that_never_starts(self) -> None:
+        _, problem = self.run_mode("never_starts", start_command=None, startup=0.3)
+        self.assertEqual(problem, "The server did not finish starting")
+
+    def test_load_only_run_sees_errors_logged_while_starting(self) -> None:
+        lines, problem = self.run_mode("startup_error", start_command=None)
+        self.assertIsNone(problem)
+        found = run_server_tests.analyse(lines, ("demo",))
+        self.assertEqual(len(found.load_errors), 1)
+        self.assertIn("Unknown command near 'foo'", found.load_errors[0])
+
 
 class ReportTests(unittest.TestCase):
     def report(
-        self, found: run_server_tests.Analysis, problem: str | None = None
+        self,
+        found: run_server_tests.Analysis,
+        problem: str | None = None,
+        *,
+        load_only: bool = False,
     ) -> tuple[bool, str]:
         out = io.StringIO()
         with mock.patch.dict(os.environ), redirect_stdout(out):
             os.environ.pop("GITHUB_STEP_SUMMARY", None)
-            ok = run_server_tests.report("1.21.11", found, problem, ["last line"])
+            ok = run_server_tests.report(
+                "1.21.11", found, problem, ["last line"], load_only=load_only
+            )
         return ok, out.getvalue()
+
+    def test_load_only_passes_without_a_test_result(self) -> None:
+        ok, printed = self.report(run_server_tests.Analysis(), load_only=True)
+        self.assertTrue(ok)
+        self.assertIn("Minecraft 1.21.11: load only; 0 failures", printed)
+
+    def test_load_only_still_fails_on_a_load_error(self) -> None:
+        found = run_server_tests.Analysis(load_errors=["e"])
+        self.assertFalse(self.report(found, load_only=True)[0])
+
+    def test_load_only_still_fails_when_the_server_did_not_start(self) -> None:
+        found = run_server_tests.Analysis()
+        problem = "The server did not finish starting"
+        ok, printed = self.report(found, problem, load_only=True)
+        self.assertFalse(ok)
+        self.assertIn("::error title=Server test run (1.21.11)::The server", printed)
+
+    def test_without_load_only_a_missing_result_fails(self) -> None:
+        self.assertFalse(self.report(run_server_tests.Analysis())[0])
 
     def test_passed(self) -> None:
         found = run_server_tests.Analysis(result="PASSED", counts="2 passed")
@@ -277,12 +337,13 @@ class ReportTests(unittest.TestCase):
 
 @unittest.skipIf(sys.platform == "win32", "needs a POSIX shell script as fake java")
 class MainTests(TempDirTestCase):
-    def run_main(self, mode: str) -> tuple[int, str]:
+    def run_main(self, mode: str, *, load_only: bool = False) -> tuple[int, str]:
         repo = self.tmp / "repo"
         write(repo / "armour.json", '{"pack_name": "demo"}')
         write(repo / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
         write(repo / "data/demo/function/a.mcfunction")
-        make_tests_pack(repo, "demo_test")
+        if not load_only:
+            make_tests_pack(repo, "demo_test")
         java = self.tmp / "fake-java"
         java.write_text(
             f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\n'
@@ -290,17 +351,16 @@ class MainTests(TempDirTestCase):
         java.chmod(java.stat().st_mode | stat.S_IEXEC)
         jar = self.tmp / "server.jar"
         jar.write_bytes(b"")
+        argv = [
+            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
+            "--sha1", "0", "--server-jar", str(jar), "--java", str(java),
+            "--repo", str(repo), "--work-dir", str(self.tmp / "run"),
+            "--startup-timeout", "10", "--test-timeout", "10",
+        ]  # fmt: skip
+        argv += ["--load-only"] if load_only else ["--tests-dir", str(repo / "tests")]
         out = io.StringIO()
         with fast_pauses(), redirect_stdout(out):
-            code = run_server_tests.main(
-                [
-                    "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-                    "--sha1", "0", "--server-jar", str(jar), "--java", str(java),
-                    "--repo", str(repo), "--tests-dir", str(repo / "tests"),
-                    "--work-dir", str(self.tmp / "run"), "--startup-timeout", "10",
-                    "--test-timeout", "10",
-                ]
-            )  # fmt: skip
+            code = run_server_tests.main(argv)
         return code, out.getvalue()
 
     def test_passing_pack(self) -> None:
@@ -315,6 +375,24 @@ class MainTests(TempDirTestCase):
             "file/armour,file/demo,file/demo_test",
             (self.tmp / "run/server.properties").read_text(),
         )
+
+    def test_load_only_stages_just_the_data_pack(self) -> None:
+        code, printed = self.run_main("passes", load_only=True)
+        self.assertEqual(code, 0, printed)
+        self.assertIn("Staged the data pack for Minecraft 1.21.11 (load only)", printed)
+        self.assertIn("Minecraft 1.21.11: load only;", printed)
+        datapacks = self.tmp / "run/world/datapacks"
+        self.assertEqual([p.name for p in datapacks.iterdir()], ["demo"])
+        self.assertIn(
+            "initial-enabled-packs=vanilla,file/demo\n",
+            (self.tmp / "run/server.properties").read_text(),
+        )
+
+    def test_load_only_error_while_starting_gives_exit_code_1(self) -> None:
+        code, printed = self.run_main("startup_error", load_only=True)
+        self.assertEqual(code, 1)
+        self.assertIn("Pack failed to load", printed)
+        self.assertIn("Unknown command near 'foo'", printed)
 
     def test_failing_test_gives_exit_code_1(self) -> None:
         code, printed = self.run_main("fails")

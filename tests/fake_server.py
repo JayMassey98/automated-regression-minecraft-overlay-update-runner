@@ -4,6 +4,8 @@ Usage: fake_server.py MODE
   passes       starts, and reports a passing run when told to start the tests
   fails        starts, and reports a failing test
   load_error   like `passes`, but also logs a load error for the "demo" pack
+  startup_error logs a load error for the "demo" pack while starting up, and then
+               behaves like `passes` (what a broken data pack looks like with no tests)
   silent       starts, but never reports a result
   never_starts never prints its "Done" line
 Every mode exits when it receives `stop`.
@@ -21,6 +23,9 @@ def log(text: str, level: str = "INFO") -> None:
 
 def main(mode: str) -> None:
     """Behave like a server in the given mode until `stop` arrives."""
+    if mode == "startup_error":
+        log("Couldn't parse demo:thing", "ERROR")
+        print("    Unknown command near 'foo'", flush=True)
     if mode != "never_starts":
         log('Done (0.1s)! For help, type "help"')
     for raw in sys.stdin:

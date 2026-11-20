@@ -13,6 +13,10 @@ Steps:
      logs a load error (broken recipe, tag, function...), or when no result
      arrives.
 
+With --load-only, for packs that have no function tests (such as world
+generation packs), only the data pack is staged. The server must start and log
+no load errors for the pack; no tests are run.
+
 Exit codes: 0 = all tests passed, 1 = failures or problems.
 """
 
@@ -76,7 +80,7 @@ sync-chunk-writes=false
 enable-rcon=false
 enable-query=false
 server-port={SERVER_PORT}
-initial-enabled-packs=vanilla,file/{armour_config.HARNESS_NAMESPACE},file/{{pack_name}},file/{{tests_namespace}}
+initial-enabled-packs=vanilla,{{enabled_packs}}
 """
 
 # A line like "[12:00:00] [Server thread/ERROR]: ..." (we then check it mentions
@@ -157,12 +161,15 @@ def stage_tests_pack(tests: Path, destination: Path, namespace: str) -> int:
     return count
 
 
-def write_server_files(work: Path, pack_name: str, tests_namespace: str) -> None:
-    """Accept the EULA and write server.properties for the test server."""
+def write_server_files(work: Path, pack_names: Sequence[str]) -> None:
+    """Accept the EULA and write server.properties, enabling these packs.
+
+    Each name is also the name of the pack's folder in the world's `datapacks`.
+    """
+    enabled = ",".join(f"file/{name}" for name in pack_names)
     (work / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     (work / "server.properties").write_text(
-        SERVER_PROPERTIES.format(pack_name=pack_name, tests_namespace=tests_namespace),
-        encoding="utf-8",
+        SERVER_PROPERTIES.format(enabled_packs=enabled), encoding="utf-8"
     )
 
 
@@ -285,25 +292,32 @@ def launch_server(
 def run_tests_on_server(
     command: Sequence[str],
     work: Path,
-    start_command: str,
+    start_command: str | None,
     *,
     startup_timeout: float,
     test_timeout: float,
 ) -> tuple[list[str], str | None]:
-    """Run the harness and return (server log lines, a problem description or None)."""
+    """Run the harness and return (server log lines, a problem description or None).
+
+    With `start_command=None` no tests are run: the server just has to start.
+    """
     lines: list[str] = []
     problem = None
     with launch_server(command, work, work / "server-output.log") as server:
         if server.wait_for("Done (", startup_timeout, lines) is None:
             problem = "The server did not finish starting"
         else:
-            server.send(start_command)
-            if server.wait_for("ARMOUR_RESULT", test_timeout, lines) is None:
-                problem = "The tests did not report a result (see the server log below)"
-                # Show which data packs the server has enabled, to help diagnose.
-                server.send("datapack list")
-                server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
-            # Give the log a moment to flush anything printed after the result.
+            if start_command is not None:
+                server.send(start_command)
+                if server.wait_for("ARMOUR_RESULT", test_timeout, lines) is None:
+                    problem = (
+                        "The tests did not report a result (see the server log below)"
+                    )
+                    # Show which data packs the server has enabled, to help diagnose.
+                    server.send("datapack list")
+                    server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
+            # Give the log a moment to flush anything printed after the result
+            # (or, with no tests, after the server finished starting).
             server.wait_for(None, FLUSH_PAUSE_SECONDS, lines)
         # Anything the server prints while stopping can still hold load errors.
         server.stop()
@@ -379,9 +393,17 @@ def analyse(lines: Sequence[str], pack_names: Sequence[str]) -> Analysis:
 
 
 def report(
-    version: str, found: Analysis, problem: str | None, lines: list[str]
+    version: str,
+    found: Analysis,
+    problem: str | None,
+    lines: list[str],
+    *,
+    load_only: bool = False,
 ) -> bool:
-    """Print annotations and the summary; return True when everything passed."""
+    """Print annotations and the summary; return True when everything passed.
+
+    With `load_only` no test result is expected, only a clean start.
+    """
     for warning in found.load_warnings[:MAX_LOAD_WARNINGS_SHOWN]:
         annotate("warning", f"Pack log warning ({version})", warning)
     for error in found.load_errors:
@@ -393,12 +415,12 @@ def report(
 
     ok = (
         problem is None
-        and found.result == "PASSED"
+        and (load_only or found.result == "PASSED")
         and not found.fails
         and not found.load_errors
         and not found.errors
     )
-    totals = found.counts or "no totals reported"
+    totals = "load only" if load_only else found.counts or "no totals reported"
     status = "🟢 passed" if ok else "🔴 failed"
     append_summary(
         f"{status} `{version}`: {totals}, {len(found.load_errors)} pack load errors"
@@ -408,8 +430,9 @@ def report(
         annotate("error", f"Server test run ({version})", problem)
         print(f"---- last {LOG_TAIL_LINES} server log lines ----")
         print("\n".join(lines[-LOG_TAIL_LINES:]))
+    outcome = totals if load_only else f"{totals}; result={found.result}"
     print(
-        f"Minecraft {version}: {totals}; result={found.result}; "
+        f"Minecraft {version}: {outcome}; "
         f"{len(found.fails)} failures; {len(found.load_errors)} pack load errors"
     )
     return ok
@@ -439,6 +462,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cache-dir", default=".mc-cache")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--tests-dir", default="tests")
+    parser.add_argument(
+        "--load-only",
+        action="store_true",
+        help=(
+            "the pack has no function tests: only check that the server starts "
+            "and loads it without errors (--tests-dir is ignored)"
+        ),
+    )
     parser.add_argument("--work-dir", default="server-run")
     parser.add_argument("--java", default="java")
     parser.add_argument("--startup-timeout", type=float, default=300)
@@ -469,27 +500,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     )
     stage_data_pack(repo, datapacks / config.pack_name, widen=args.kind == "snapshot")
-    stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
-    test_count = stage_tests_pack(
-        Path(args.tests_dir).resolve(),
-        datapacks / config.tests_namespace,
-        config.tests_namespace,
-    )
-    write_server_files(work, config.pack_name, config.tests_namespace)
-    print(f"Staged the data pack and {test_count} tests for Minecraft {args.version}")
+    pack_names: tuple[str, ...] = (config.pack_name,)
+    start_command = None
+    if args.load_only:
+        print(f"Staged the data pack for Minecraft {args.version} (load only)")
+    else:
+        stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
+        test_count = stage_tests_pack(
+            Path(args.tests_dir).resolve(),
+            datapacks / config.tests_namespace,
+            config.tests_namespace,
+        )
+        pack_names = (
+            armour_config.HARNESS_NAMESPACE,
+            config.pack_name,
+            config.tests_namespace,
+        )
+        start_command = armour_config.START_COMMAND
+        print(
+            f"Staged the data pack and {test_count} tests for Minecraft {args.version}"
+        )
+    write_server_files(work, pack_names)
 
     lines, problem = run_tests_on_server(
         [args.java, JAVA_HEAP, "-jar", str(jar), "nogui"],
         work,
-        armour_config.START_COMMAND,
+        start_command,
         startup_timeout=args.startup_timeout,
         test_timeout=args.test_timeout,
     )
-    found = analyse(
-        lines,
-        (armour_config.HARNESS_NAMESPACE, config.pack_name, config.tests_namespace),
+    found = analyse(lines, pack_names)
+    return (
+        0
+        if report(args.version, found, problem, lines, load_only=args.load_only)
+        else 1
     )
-    return 0 if report(args.version, found, problem, lines) else 1
 
 
 if __name__ == "__main__":

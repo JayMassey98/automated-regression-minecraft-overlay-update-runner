@@ -32,7 +32,10 @@ server tests across target versions in parallel to speed up verification.
 
 3. **Write your tests** in `tests/data/<tests_namespace>/function/`, one
    `.mcfunction` file per test, with a `tests/pack.mcmeta` (see
-   [Writing Tests](#writing-tests)). Then generate the test list:
+   [Writing Tests](#writing-tests)). Skip this step if your pack has no
+   functions (see
+   [Packs Without Function Tests](#packs-without-function-tests)). Then
+   generate the test list:
 
    ```bash
    python3 .armour/scripts/generate_test_runner.py tests
@@ -138,8 +141,29 @@ server log, which `run_server_tests.py` reads:
 
 The harness builds its own platform at `0 150 0`, so any world works.
 
+## Packs Without Function Tests
+
+Some packs have nothing to run, such as one that only changes world
+generation. For these, pass `--load-only` to `run_server_tests.py` instead of
+`--tests-dir`, and skip `tests/` and the test list entirely:
+
+```bash
+python3 .armour/scripts/run_server_tests.py --load-only --version 26.3 \
+  --server-url <server.jar url> --sha1 <sha1>
+```
+
+Only the pack is installed (no harness or tests pack). The server must start,
+and log no load errors that mention the pack. A registry problem that the
+server cannot recover from, such as a biome that lists a feature that does not
+exist, stops it from starting, which also fails the run.
+
 ## Current Limitations
 
+- **Load errors are found by pack name**: a log error counts against a pack
+  only if its line mentions the pack's name (or the `armour` harness). A
+  problem in a file that overrides vanilla data (for example
+  `data/minecraft/...`) is therefore only caught if it also stops the server
+  from starting.
 - **Data pack must live at the repository root**: `build_version_pack.py` and
   `run_server_tests.py` expect `pack.mcmeta`, `data/`, and any version
   overlay folders to sit directly at the top level of the consuming repo,
