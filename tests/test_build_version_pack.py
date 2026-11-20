@@ -77,7 +77,7 @@ class FormatTests(TestCase):
             (88, build_version_pack.MINOR_INFINITY),
         )
         self.assertEqual(build_version_pack.as_format([94, 1], upper=True), (94, 1))
-        values: list[object] = ["88", True, [1], [1, 2, 3]]
+        values: list[object] = ["88", True, 1.5, [1], [1, 2, 3]]
         for value in values:
             with self.subTest(value), self.assertRaises(ArmourError):
                 build_version_pack.as_format(value, upper=False)
@@ -102,6 +102,8 @@ class FormatTests(TestCase):
     def test_overlay_range_rejects_unknown_formats_value(self) -> None:
         with self.assertRaises(ArmourError):
             build_version_pack.overlay_range({"formats": "81"})
+        with self.assertRaisesRegex(ArmourError, "minimum format exceeds maximum"):
+            build_version_pack.overlay_range({"min_format": 90, "max_format": 80})
 
 
 class ReadVersionJsonTests(TempDirTestCase):
@@ -271,6 +273,18 @@ class MainTests(TempDirTestCase):
             "new/data/p/function/new.mcfunction",
         )
         self.assertIn("94.1", summary.read_text(encoding="utf-8"))
+
+    def test_source_map_cannot_overwrite_pack_metadata(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "pack")
+        write(repo / "armour.json", json.dumps({"pack_name": "p", "pack_path": "packs/pack"}))
+        before = (pack / "pack.mcmeta").read_text(encoding="utf-8")
+        with self.assertRaisesRegex(ArmourError, "must not overwrite the source pack"):
+            self.run_main(
+                "--repo", str(repo), "--pack-version", "90",
+                "--out", "build/flattened", "--source-map", "packs/pack/pack.mcmeta",
+            )
+        self.assertEqual((pack / "pack.mcmeta").read_text(encoding="utf-8"), before)
 
     def test_nested_pack_path_uses_repo_root_for_outputs_and_source_map(self) -> None:
         repo = self.tmp / "repo"
