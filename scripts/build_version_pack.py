@@ -104,7 +104,9 @@ def read_version_json(jar_path: Path) -> dict[str, Any]:
 
 def _format_number(value: object) -> int:
     """Convert one Minecraft format component without leaking conversion errors."""
-    if isinstance(value, bool):
+    if isinstance(value, bool) or (
+        isinstance(value, float) and not value.is_integer()
+    ):
         raise ArmourError(f"Invalid data pack format component: {value!r}")
     try:
         number = int(value)
@@ -151,6 +153,8 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
         high = as_format(entry["max_format"], upper=True)
     legacy = entry.get("formats")  # 1.20.2 - 1.21.8 style
     if legacy is None:
+        if low > high:
+            raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
         return low, high
     if isinstance(legacy, int) and not isinstance(legacy, bool):
         value = _format_number(legacy)
