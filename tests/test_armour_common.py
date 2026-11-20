@@ -153,7 +153,12 @@ class FetchJsonTests(TestCase):
 
 class DownloadTests(TempDirTestCase):
     def test_rejects_malformed_sha1_before_creating_cache(self) -> None:
-        for value in ("../" + "a" * 38, "a" * 39, "g" * 40, ""):
+        for value in (
+            "../" + "a" * 38,
+            "a" * 39,
+            "g" * 40,
+            "",
+        ):
             cache = self.tmp / "cache"
             with self.subTest(value=value), self.assertRaisesRegex(
                 ArmourError, "40 hexadecimal"
