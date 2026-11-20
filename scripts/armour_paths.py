@@ -46,7 +46,9 @@ def _configured_path(repo: Path) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ArmourError(f'{config}: "pack_path" must be a non-empty relative path string')
+        raise ArmourError(
+            f'{config}: "pack_path" must be a non-empty relative path string'
+        )
     return value
 
 
