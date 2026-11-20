@@ -163,19 +163,28 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
     A jar that is already cached and still matches is reused.
     """
     expected = sha1.lower()
+    if len(expected) != 40 or any(char not in "0123456789abcdef" for char in expected):
+        raise ArmourError("Server JAR SHA-1 must be exactly 40 hexadecimal characters")
     cache_dir.mkdir(parents=True, exist_ok=True)
     target = cache_dir / f"{expected}.jar"
-    if target.exists() and sha1_of(target) == expected:
+    if target.is_symlink():
+        raise ArmourError(f"Cached server JAR must not be a symbolic link: {target}")
+    if target.is_file() and sha1_of(target) == expected:
         print(f"Using cached server jar {target.name}")
         return target
 
-    partial = target.with_suffix(".part")
-
     def attempt() -> Path:
+        partial: Path | None = None
         try:
+            # A unique exclusive temporary file prevents a pre-created .part symlink
+            # from redirecting writes, and keeps retries isolated from one another.
+            import tempfile
+
+            fd, name = tempfile.mkstemp(prefix=f".{expected}.", suffix=".part", dir=cache_dir)
+            partial = Path(name)
             with (
+                os.fdopen(fd, "wb") as handle,
                 _open_url(url, JAR_TIMEOUT_SECONDS) as response,
-                partial.open("wb") as handle,
             ):
                 shutil.copyfileobj(response, handle)
             if sha1_of(partial) != expected:
@@ -183,7 +192,8 @@ def download_server_jar(url: str, sha1: str, cache_dir: Path) -> Path:
                 raise ChecksumError(msg)
             partial.replace(target)
         finally:
-            partial.unlink(missing_ok=True)
+            if partial is not None:
+                partial.unlink(missing_ok=True)
         return target
 
     jar = _with_retries(attempt, f"download {url}")
