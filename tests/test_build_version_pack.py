@@ -287,6 +287,19 @@ class MainTests(TempDirTestCase):
             )
         self.assertEqual((pack / "pack.mcmeta").read_text(encoding="utf-8"), before)
 
+    def test_source_map_cannot_overwrite_repository_config(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo / "packs" / "pack")
+        config = repo / "armour.json"
+        write(config, '{"pack_name": "p"}')
+        before = config.read_text(encoding="utf-8")
+        with self.assertRaisesRegex(ArmourError, "dedicated output directory"):
+            self.run_main(
+                "--repo", str(repo), "--pack-version", "90",
+                "--out", "build/flattened", "--source-map", "armour.json",
+            )
+        self.assertEqual(config.read_text(encoding="utf-8"), before)
+
     def test_nested_pack_path_uses_repo_root_for_outputs_and_source_map(self) -> None:
         repo = self.tmp / "repo"
         pack = make_repo(repo / "packs" / "deep pack")
