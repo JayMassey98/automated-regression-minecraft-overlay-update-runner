@@ -54,10 +54,13 @@ server tests across target versions in parallel to speed up verification.
    line arguments, so every repo decides for itself. `--repo` always identifies
    the consuming repository root. ARMOUR discovers a single data pack anywhere
    below that root; set `pack_path` in `armour.json` or pass `--pack-path` when
-   more than one pack exists. Paths in `armour.json` and relative CLI paths are
-   interpreted from the repository root, not the current working directory. The
-server runner's default work directory is a hidden sibling of the repository;
-any explicit `--work-dir` must also be outside the repository and staged inputs.
+   more than one pack exists. Paths in `armour.json` and relative paths for the
+   build and server-test scripts are interpreted from the repository root, not
+   the current working directory. The version-discovery script's local
+   `--manifest` path is relative to the current working directory; URLs are
+   unaffected. The server runner's default work directory is a hidden sibling
+   of the repository; any explicit `--work-dir` must also be outside the
+   repository and staged inputs.
    See
    `elemental-tools/.github/workflows/ci.yml` for a complete example.
 
