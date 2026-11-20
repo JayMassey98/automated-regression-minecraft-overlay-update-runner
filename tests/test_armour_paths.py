@@ -103,6 +103,17 @@ class ResolvePackTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "UTF-8"):
             armour_paths.resolve_pack_root(self.tmp)
 
+    def test_pack_path_rejects_internal_symlink_alias(self) -> None:
+        actual = self.tmp / "packs/real"
+        make_pack(actual)
+        link = self.tmp / "packs/selected"
+        try:
+            link.symlink_to(actual, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            armour_paths.resolve_pack_root(self.tmp, "packs/selected")
+
     def test_pack_path_symlink_cannot_escape_repository(self) -> None:
         outside = self.tmp.parent / (self.tmp.name + "-outside")
         make_pack(outside)
