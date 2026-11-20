@@ -56,10 +56,14 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
     if selected is not None:
         relative = PurePosixPath(selected)
         if relative.is_absolute() or ".." in relative.parts or not selected.strip():
-            raise ArmourError(f"pack_path must be a relative path inside {repo}: {selected!r}")
+            raise ArmourError(
+                f"pack_path must be a relative path inside {repo}: {selected!r}"
+            )
         target = (repo / Path(*relative.parts)).resolve()
         if not target.is_relative_to(repo):
-            raise ArmourError(f"pack_path must stay inside the repository: {selected!r}")
+            raise ArmourError(
+                f"pack_path must stay inside the repository: {selected!r}"
+            )
         if not _is_pack(target):
             raise ArmourError(
                 f"Configured data pack {selected!r} is invalid: expected pack.mcmeta "
@@ -81,7 +85,9 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
             f"No data pack found under {repo}. Expected a directory containing "
             "pack.mcmeta and data/. Set pack_path in armour.json or pass --pack-path."
         )
-    locations = ", ".join(path.relative_to(repo).as_posix() or "." for path in candidates)
+    locations = ", ".join(
+        path.relative_to(repo).as_posix() or "." for path in candidates
+    )
     raise ArmourError(
         f"Found multiple data packs under {repo}: {locations}. "
         "Set pack_path in armour.json or pass --pack-path to select one."
