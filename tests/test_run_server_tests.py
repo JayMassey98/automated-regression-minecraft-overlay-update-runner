@@ -369,9 +369,18 @@ class MainTests(TempDirTestCase):
         write(pack / "pack.mcmeta", '{"pack": {"max_format": 94}}')
         write(pack / "data/demo/function/a.mcfunction")
         args = [
-            "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-            "--sha1", "0", "--repo", str(repo), "--cache-dir", "packs/source/cache",
-            "--work-dir", str(self.tmp / "work"),
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--cache-dir",
+            "packs/source/cache",
+            "--work-dir",
+            str(self.tmp / "work"),
         ]
         with self.assertRaisesRegex(
             ArmourError, "Cache directory must not overlap"
