@@ -133,7 +133,8 @@ class OverlayEntriesTests(TestCase):
         self.assertEqual(build_version_pack.overlay_entries({"pack": {}}), [])
 
     def test_rejects_malformed_overlay_shapes(self) -> None:
-        for overlays in (None, [], {"entries": None}, {"entries": [None]}, {"entries": ["x"]}):
+        invalid = (None, [], {"entries": None}, {"entries": [None]}, {"entries": ["x"]})
+        for overlays in invalid:
             with self.subTest(overlays), self.assertRaises(ArmourError):
                 build_version_pack.overlay_entries({"overlays": overlays})
 
