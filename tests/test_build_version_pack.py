@@ -222,7 +222,8 @@ class BuildTests(TempDirTestCase):
 
     def test_data_symlinks_are_rejected(self) -> None:
         repo = make_repo(self.tmp / "repo")
-        outside = write(self.tmp / "outside.mcfunction", "outside")
+        outside = self.tmp / "outside.mcfunction"
+        write(outside, "outside")
         try:
             (repo / "data/p/function/outside.mcfunction").symlink_to(outside)
         except OSError:
