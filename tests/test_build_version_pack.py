@@ -301,8 +301,14 @@ class MainTests(TempDirTestCase):
         before = config.read_text(encoding="utf-8")
         with self.assertRaisesRegex(ArmourError, "dedicated output directory"):
             self.run_main(
-                "--repo", str(repo), "--pack-version", "90",
-                "--out", "build/flattened", "--source-map", "armour.json",
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                "build/flattened",
+                "--source-map",
+                "armour.json",
             )
         self.assertEqual(config.read_text(encoding="utf-8"), before)
 
