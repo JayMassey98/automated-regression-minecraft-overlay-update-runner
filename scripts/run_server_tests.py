@@ -485,11 +485,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.work_dir is not None
         else Path("..") / f".{repo.name}-server-run"
     )
-    work = (
-        (repo / work_dir).resolve()
-        if not work_dir.is_absolute()
-        else work_dir.resolve()
-    )
+    work_candidate = work_dir if work_dir.is_absolute() else repo / work_dir
+    work_candidate = work_candidate.absolute()
+    reject_symlink_components(work_candidate, Path(work_candidate.anchor))
+    work = work_candidate.resolve()
     tests_dir = Path(args.tests_dir)
     if not tests_dir.is_absolute():
         tests_dir = repo / tests_dir
@@ -502,9 +501,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     cache_dir = Path(args.cache_dir)
     if not cache_dir.is_absolute():
         cache_dir = repo / cache_dir
+    cache_dir = cache_dir.absolute()
+    reject_symlink_components(cache_dir, Path(cache_dir.anchor))
     cache_dir = cache_dir.resolve()
-    reject_symlink_components(work.absolute(), Path(work.anchor))
-    reject_symlink_components(cache_dir.absolute(), Path(cache_dir.anchor))
     if paths_overlap(cache_dir, pack_root):
         raise ArmourError(f"Cache directory must not overlap the source pack: {cache_dir}")
     protected = (
