@@ -69,8 +69,11 @@ def _load_json_object(text: str | bytes, where: str) -> dict[str, Any]:
     """Parse JSON that must be an object, reporting problems as `ArmourError`."""
     try:
         data = json.loads(text)
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        msg = f"{where} is not valid UTF-8 JSON: {error}"
+    except UnicodeDecodeError as error:
+        msg = f"{where} is not readable UTF-8: {error}"
+        raise ArmourError(msg) from error
+    except json.JSONDecodeError as error:
+        msg = f"{where} is not valid JSON: {error}"
         raise ArmourError(msg) from error
     if not isinstance(data, dict):
         msg = f"{where} must be a JSON object"
