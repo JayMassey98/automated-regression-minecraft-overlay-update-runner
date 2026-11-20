@@ -158,10 +158,13 @@ script. The selected path is relative to the repository root.
 Automatic discovery excludes known tooling and generated directories only at
 the repository root; similarly named folders deeper in the project remain
 searchable. An explicit or configured path is checked to remain inside the
-repository. Build outputs must not overlap the source pack, and server work
-directories must be outside the consuming repository and all staged inputs.
-Source-pack symlinks are rejected so staging cannot follow paths outside the
-pack. Neither workflow modifies the source pack or its overlays.
+repository. Build outputs must not overlap the source pack or protected repository
+directories; cache directories must not overlap the source pack. Destructive
+build and server-work destinations reject symlinked path components. Builds are
+prepared in a temporary sibling directory and replace the previous output only
+after validation and copying succeed. Source-pack symlinks are rejected so
+staging cannot follow paths outside the pack. Neither workflow modifies the
+source pack or its overlays.
 
 ## Running Unit Tests
 
