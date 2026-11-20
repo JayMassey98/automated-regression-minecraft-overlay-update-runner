@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import armour_config
+from armour_paths import resolve_pack_root
 from armour_common import (
     ArmourError,
     annotate,
@@ -437,7 +438,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--sha1", required=True)
     parser.add_argument("--cache-dir", default=".mc-cache")
-    parser.add_argument("--repo", default=".")
+    parser.add_argument("--repo", default=".", help="consuming repository root")
+    parser.add_argument("--pack-path", help="data pack directory relative to --repo; overrides armour.json and auto-discovery")
     parser.add_argument("--tests-dir", default="tests")
     parser.add_argument("--work-dir", default="server-run")
     parser.add_argument("--java", default="java")
@@ -455,7 +457,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     repo = Path(args.repo).resolve()
     config = armour_config.load(repo)
-    work = Path(args.work_dir).resolve()
+    pack_root = resolve_pack_root(repo, args.pack_path or config.pack_path)
+    work_dir = Path(args.work_dir)
+    work = (repo / work_dir).resolve() if not work_dir.is_absolute() else work_dir.resolve()
     if work.exists():
         shutil.rmtree(work)
     datapacks = work / "world" / "datapacks"
@@ -465,13 +469,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         Path(args.server_jar)
         if args.server_jar
         else download_server_jar(
-            args.server_url, args.sha1, Path(args.cache_dir).resolve()
+            args.server_url, args.sha1,
+            ((repo / args.cache_dir).resolve() if not Path(args.cache_dir).is_absolute() else Path(args.cache_dir).resolve())
         )
     )
-    stage_data_pack(repo, datapacks / config.pack_name, widen=args.kind == "snapshot")
+    stage_data_pack(pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot")
     stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
+    tests_dir = Path(args.tests_dir)
+    if not tests_dir.is_absolute():
+        tests_dir = repo / tests_dir
     test_count = stage_tests_pack(
-        Path(args.tests_dir).resolve(),
+        tests_dir.resolve(),
         datapacks / config.tests_namespace,
         config.tests_namespace,
     )
