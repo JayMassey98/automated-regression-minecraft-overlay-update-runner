@@ -9,26 +9,16 @@ from pathlib import Path, PurePosixPath
 from armour_common import ArmourError
 
 CONFIG_FILE = "armour.json"
-EXCLUDED_DIRS = frozenset(
+# Only exclude repository-level tooling/output directories. A directory named
+# "build", "tests", etc. deeper in a consuming repository may contain the pack.
+EXCLUDED_ROOT_DIRS = frozenset(
     {
-        ".git",
-        ".github",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        "node_modules",
-        "build",
-        "dist",
-        ".mc-cache",
-        "server-run",
-        "harness",
-        "tests",
-        ".armour",
+        ".git", ".github", ".venv", "venv", "__pycache__", ".pytest_cache",
+        ".mypy_cache", ".ruff_cache", "node_modules", "build", "dist",
+        ".mc-cache", "server-run", "harness", "tests", ".armour",
     }
 )
+
 
 
 def _is_pack(path: Path) -> bool:
@@ -37,7 +27,7 @@ def _is_pack(path: Path) -> bool:
         return False
     try:
         metadata = json.loads((path / "pack.mcmeta").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return False
     return isinstance(metadata, dict) and isinstance(metadata.get("pack"), dict)
 
@@ -48,15 +38,15 @@ def _configured_path(repo: Path) -> str | None:
         return None
     try:
         data = json.loads(config.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ArmourError(f"{config} is not valid JSON: {error}") from error
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ArmourError(f"{config} is not valid UTF-8 JSON: {error}") from error
     if not isinstance(data, dict):
         raise ArmourError(f"{config} must contain a JSON object")
     value = data.get("pack_path")
-    if value in (None, ""):
+    if value is None:
         return None
-    if not isinstance(value, str):
-        raise ArmourError(f'{config}: "pack_path" must be a relative path string')
+    if not isinstance(value, str) or not value.strip():
+        raise ArmourError(f'{config}: "pack_path" must be a non-empty relative path string')
     return value
 
 
@@ -89,10 +79,13 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
     candidates: list[Path] = []
     for current, dirs, _files in os.walk(repo):
         current_path = Path(current)
-        dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_DIRS)
+        relative = current_path.relative_to(repo)
+        if not relative.parts:
+            dirs[:] = sorted(name for name in dirs if name not in EXCLUDED_ROOT_DIRS)
+        else:
+            dirs[:] = sorted(dirs)
         if _is_pack(current_path):
             candidates.append(current_path)
-            dirs[:] = []
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
