@@ -27,7 +27,7 @@ server tests across target versions in parallel to speed up verification.
    {
      "pack_name": "elemental_tools",
      "tests_namespace": "elemental_tools_test",
-   "pack_path": "packs/elemental_tools"
+     "pack_path": "packs/elemental_tools"
    }
    ```
 
