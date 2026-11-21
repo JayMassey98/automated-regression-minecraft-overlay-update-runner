@@ -105,7 +105,13 @@ class _HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Allow redirects only to HTTPS destinations."""
 
     def redirect_request(  # noqa: ANN202, PLR0913, PLR0917
-        self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
     ) -> Any:
         if urllib.parse.urlsplit(newurl).scheme.lower() != "https":
             raise ArmourError(f"Refusing redirect to a non-HTTPS URL: {newurl}")
