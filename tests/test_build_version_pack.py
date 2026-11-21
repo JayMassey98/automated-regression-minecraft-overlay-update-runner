@@ -332,6 +332,24 @@ class MainTests(TempDirTestCase):
             code = build_version_pack.main(list(args))
         return code, out.getvalue()
 
+    def test_recovery_restores_previous_outputs_after_interrupted_commit(self) -> None:
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        out_backup = out.with_name(".out.armour-main-backup")
+        map_backup = source_map.with_name(".source-map.json.armour-main-backup")
+        write(out_backup / "previous.txt", "previous pack")
+        write(map_backup, '{"previous": true}')
+        write(out / "new.txt", "partially committed pack")
+        write(source_map, '{"new": true}')
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(journal, json.dumps({"out_existed": True, "map_existed": True}))
+        build_version_pack.recover_main_transaction(out, source_map)
+        self.assertEqual((out / "previous.txt").read_text(), "previous pack")
+        self.assertEqual(source_map.read_text(), '{"previous": true}')
+        self.assertFalse(out_backup.exists())
+        self.assertFalse(map_backup.exists())
+        self.assertFalse(journal.exists())
+
     def test_pack_version_writes_pack_source_map_and_summary(self) -> None:
         repo = make_repo(self.tmp / "repo")
         summary = self.tmp / "summary.md"
