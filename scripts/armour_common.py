@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-from email.message import Message
 import hashlib
 import json
 import os
@@ -23,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from email.message import Message
 
 # Sent with every download so Mojang's servers can tell this traffic apart.
 USER_AGENT = "armour-ci"
