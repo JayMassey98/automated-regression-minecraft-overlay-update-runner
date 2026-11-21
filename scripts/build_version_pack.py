@@ -415,7 +415,7 @@ def recover_main_transaction(  # noqa: C901, PLR0912
         not isinstance(state, dict)
         or not all(
             isinstance(state.get(key), bool)
-        for key in ("out_existed", "map_existed", "committed")
+            for key in ("out_existed", "map_existed", "committed")
         )
         or state.get("map_path")
         != (str(source_map_path) if source_map_path is not None else None)
