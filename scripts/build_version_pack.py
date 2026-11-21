@@ -409,7 +409,9 @@ def recover_main_transaction(  # noqa: C901, PLR0912
     try:
         state = json.loads(journal.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ArmourError(f"Cannot read transaction journal {journal}: {error}") from error
+        raise ArmourError(
+            f"Cannot read transaction journal {journal}: {error}"
+        ) from error
     if not isinstance(state, dict) or not all(
         isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
     ):
