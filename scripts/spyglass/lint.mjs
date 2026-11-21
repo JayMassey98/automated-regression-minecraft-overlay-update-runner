@@ -359,6 +359,10 @@ function reportDiagnostics(diagnosticsByUri, { args, rootDir, sourceMap }) {
 			if (error.severity >= threshold) {
 				counts.failing++;
 			}
+			// Annotations are hidden from the raw log, so print the place too.
+			const line = error.posRange.start.line + 1;
+			const col = error.posRange.start.character + 1;
+			console.log(`${file}:${line}:${col} ${error.message}`);
 			console.log(
 				annotation(
 					isError ? "error" : "warning",
@@ -366,8 +370,8 @@ function reportDiagnostics(diagnosticsByUri, { args, rootDir, sourceMap }) {
 					error.message,
 					{
 						file,
-						line: error.posRange.start.line + 1,
-						col: error.posRange.start.character + 1,
+						line,
+						col,
 						endLine: error.posRange.end.line + 1,
 						endCol: error.posRange.end.character + 1,
 					},

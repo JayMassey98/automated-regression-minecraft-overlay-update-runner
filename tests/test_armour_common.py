@@ -9,6 +9,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import TestCase, mock
@@ -114,6 +115,22 @@ class FetchJsonTests(TestCase):
                 armour_common.fetch_json_object("https://x.test"), {"a": 1}
             )
 
+    def test_redirect_handler_rejects_non_https_destinations(self) -> None:
+        handler = armour_common._HTTPSRedirectHandler()
+        request = urllib.request.Request("https://example.test")
+        with self.assertRaisesRegex(ArmourError, "non-HTTPS"):
+            handler.redirect_request(
+                request, None, 302, "Found", {}, "http://example.test/redirect"
+            )
+
+    def test_redirect_handler_allows_https_destinations(self) -> None:
+        handler = armour_common._HTTPSRedirectHandler()
+        request = urllib.request.Request("https://example.test")
+        redirected = handler.redirect_request(
+            request, None, 302, "Found", {}, "https://example.test/redirect"
+        )
+        self.assertEqual(redirected.full_url, "https://example.test/redirect")
+
     def test_rejects_non_https_urls_without_retrying(self) -> None:
         for url in ("http://x.test/a", "file:///etc/passwd"):
             with self.subTest(url), self.assertRaisesRegex(ArmourError, "non-HTTPS"):
@@ -152,6 +169,21 @@ class FetchJsonTests(TestCase):
 
 
 class DownloadTests(TempDirTestCase):
+    def test_rejects_malformed_sha1_before_creating_cache(self) -> None:
+        for value in (
+            "../" + "a" * 38,
+            "a" * 39,
+            "g" * 40,
+            "",
+        ):
+            cache = self.tmp / "cache"
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ArmourError, "40 hexadecimal"),
+            ):
+                armour_common.download_server_jar("https://x.test", value, cache)
+            self.assertFalse(cache.exists())
+
     def test_sha1_of(self) -> None:
         path = self.tmp / "f"
         path.write_bytes(JAR)

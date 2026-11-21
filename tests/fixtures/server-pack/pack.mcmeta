@@ -1,0 +1,7 @@
+{
+  "pack": {
+    "description": "ARMOUR real-server integration fixture",
+    "min_format": 88,
+    "max_format": [9999, 0]
+  }
+}

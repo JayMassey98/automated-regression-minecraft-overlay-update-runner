@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import redirect_stdout
 from io import StringIO
 
@@ -18,7 +19,9 @@ class GenerateTests(TempDirTestCase):
         text = (
             pack / "data/demo_test/function/harness/run_tests.mcfunction"
         ).read_text(encoding="utf-8")
-        self.assertIn("function demo_test:harness/begin_test", text)
+        self.assertIn("function armour:harness/begin_test", text)
+        self.assertIn("function armour:harness/end_test", text)
+        self.assertNotIn("demo_test:harness/begin_test", text)
         self.assertIn(
             "execute positioned 8 150 8 run function demo_test:generic/b", text
         )
@@ -27,6 +30,21 @@ class GenerateTests(TempDirTestCase):
         )
         self.assertNotIn("run function demo_test:harness/start", text)
         self.assertNotIn("elemental_tools", text)
+
+    def test_run_tests_tag_points_at_the_generated_runner(self) -> None:
+        pack = make_tests_pack(self.tmp, "demo_test")
+        generate_test_runner.generate(pack, "demo_test")
+        tag = pack / "data/armour/tags/function/run_tests.json"
+        self.assertEqual(
+            json.loads(tag.read_text(encoding="utf-8")),
+            {"values": ["demo_test:harness/run_tests"]},
+        )
+        self.assertTrue(tag.read_text(encoding="utf-8").endswith("}\n"))
+
+    def test_tag_file_is_not_mistaken_for_a_test(self) -> None:
+        pack = make_tests_pack(self.tmp, "demo_test")
+        generate_test_runner.generate(pack, "demo_test")
+        self.assertEqual(generate_test_runner.generate(pack, "demo_test"), 2)
 
     def test_tests_are_listed_in_sorted_order(self) -> None:
         pack = make_tests_pack(self.tmp, "demo_test")
@@ -44,6 +62,12 @@ class GenerateTests(TempDirTestCase):
         self.assertEqual(
             generate_test_runner.find_tests(self.tmp, "x"), ["assert", "harness"]
         )
+
+    def test_invalid_function_filename_is_rejected(self) -> None:
+        function = self.tmp / "data/x/function"
+        write(function / "Bad Name.mcfunction")
+        with self.assertRaisesRegex(ArmourError, "Invalid Minecraft function path"):
+            generate_test_runner.find_tests(self.tmp, "x")
 
     def test_render_counts_tests(self) -> None:
         text = generate_test_runner.render(["a", "b/c"], "ns")

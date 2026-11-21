@@ -26,10 +26,13 @@ Outputs the flattened pack plus a JSON map {flattened path: repo path}.
 from __future__ import annotations
 
 import argparse
+import importlib
 import io
 import json
+import os
 import shutil
 import zipfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -40,9 +43,10 @@ from armour_common import (
     download_server_jar,
     run,
 )
+from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
 # A bare integer upper bound such as `"max_format": 88` covers every minor
 # version of 88.
@@ -68,6 +72,9 @@ def _load_json_object(text: str | bytes, where: str) -> dict[str, Any]:
     """Parse JSON that must be an object, reporting problems as `ArmourError`."""
     try:
         data = json.loads(text)
+    except UnicodeDecodeError as error:
+        msg = f"{where} is not readable UTF-8: {error}"
+        raise ArmourError(msg) from error
     except json.JSONDecodeError as error:
         msg = f"{where} is not valid JSON: {error}"
         raise ArmourError(msg) from error
@@ -98,18 +105,25 @@ def read_version_json(jar_path: Path) -> dict[str, Any]:
     raise ArmourError(msg)
 
 
+def _format_number(value: object) -> int:
+    """Validate one Minecraft format component as a non-negative JSON integer."""
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ArmourError(f"Invalid data pack format component: {value!r}")
+    return value
+
+
 def data_format(pack_version: object) -> Format:
     """Normalise Mojang's `pack_version` into a (major, minor) data pack format."""
     if isinstance(pack_version, int) and not isinstance(pack_version, bool):
-        return (pack_version, 0)
+        return (_format_number(pack_version), 0)
     if isinstance(pack_version, dict):
         if "data_major" in pack_version:
             return (
-                int(pack_version["data_major"]),
-                int(pack_version.get("data_minor", 0)),
+                _format_number(pack_version["data_major"]),
+                _format_number(pack_version.get("data_minor", 0)),
             )
         if "data" in pack_version:
-            return (int(pack_version["data"]), 0)
+            return (_format_number(pack_version["data"]), 0)
     msg = f"Cannot work out the data pack format from {pack_version!r}"
     raise ArmourError(msg)
 
@@ -117,14 +131,14 @@ def data_format(pack_version: object) -> Format:
 def as_format(value: object, *, upper: bool) -> Format:
     """Read a `min_format`/`max_format` value; a bare integer spans every minor."""
     if isinstance(value, int) and not isinstance(value, bool):
-        return (value, MINOR_INFINITY if upper else 0)
+        return (_format_number(value), MINOR_INFINITY if upper else 0)
     if isinstance(value, list) and len(value) == _PAIR_LENGTH:
-        return (int(value[0]), int(value[1]))
+        return (_format_number(value[0]), _format_number(value[1]))
     msg = f"Unrecognised pack format value: {value!r}"
     raise ArmourError(msg)
 
 
-def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
+def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:  # noqa: C901
     """Return the inclusive (low, high) format range an overlay entry applies to."""
     low: Format = (0, 0)
     high: Format = (MINOR_INFINITY, MINOR_INFINITY)
@@ -132,20 +146,37 @@ def overlay_range(entry: Mapping[str, Any]) -> tuple[Format, Format]:
         low = as_format(entry["min_format"], upper=False)
     if "max_format" in entry:
         high = as_format(entry["max_format"], upper=True)
-    legacy = entry.get("formats")  # 1.20.2 - 1.21.8 style
-    if legacy is None:
-        return low, high
-    if isinstance(legacy, int) and not isinstance(legacy, bool):
-        return (legacy, 0), (legacy, MINOR_INFINITY)
-    if isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
-        return (int(legacy[0]), 0), (int(legacy[1]), MINOR_INFINITY)
-    if isinstance(legacy, dict):
-        return (
-            (int(legacy["min_inclusive"]), 0),
-            (int(legacy["max_inclusive"]), MINOR_INFINITY),
+    if "formats" in entry and ("min_format" in entry or "max_format" in entry):
+        raise ArmourError(
+            "Overlay entry must use either legacy 'formats' or modern "
+            "min_format/max_format bounds, not both"
         )
-    msg = f"Unrecognised overlay formats value: {legacy!r}"
-    raise ArmourError(msg)
+    if low > high:
+        raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
+    if "formats" not in entry:
+        return low, high
+    legacy = entry["formats"]  # 1.20.2 - 1.21.8 style
+    if legacy is None:
+        raise ArmourError(f"Overlay formats must not be null: {entry!r}")
+    if isinstance(legacy, int) and not isinstance(legacy, bool):
+        value = _format_number(legacy)
+        legacy_low, legacy_high = (value, 0), (value, MINOR_INFINITY)
+    elif isinstance(legacy, list) and len(legacy) == _PAIR_LENGTH:
+        legacy_low = (_format_number(legacy[0]), 0)
+        legacy_high = (_format_number(legacy[1]), MINOR_INFINITY)
+    elif isinstance(legacy, dict):
+        try:
+            legacy_low = (_format_number(legacy["min_inclusive"]), 0)
+            legacy_high = (_format_number(legacy["max_inclusive"]), MINOR_INFINITY)
+        except KeyError as error:
+            msg = f"Unrecognised overlay formats value: {legacy!r}"
+            raise ArmourError(msg) from error
+    else:
+        msg = f"Unrecognised overlay formats value: {legacy!r}"
+        raise ArmourError(msg)
+    if legacy_low > legacy_high:
+        raise ArmourError(f"Overlay minimum format exceeds maximum: {entry!r}")
+    return legacy_low, legacy_high
 
 
 def load_mcmeta(repo: Path) -> dict[str, Any]:
@@ -154,22 +185,48 @@ def load_mcmeta(repo: Path) -> dict[str, Any]:
     if not path.is_file():
         msg = f"{path} does not exist; is --repo the data pack's root?"
         raise ArmourError(msg)
-    return _load_json_object(path.read_text(encoding="utf-8"), str(path))
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise ArmourError(f"Cannot read {path} as UTF-8: {error}") from error
+    return _load_json_object(content, str(path))
 
 
 def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Return the overlay entries listed in a pack.mcmeta, each with a `directory`."""
-    entries = mcmeta.get("overlays", {}).get("entries", [])
+    """Validate and return the overlay entries listed in pack.mcmeta."""
+    overlays = mcmeta.get("overlays", {})
+    if not isinstance(overlays, dict):
+        raise ArmourError('"overlays" in pack.mcmeta must be an object')
+    entries = overlays.get("entries", [])
+    if not isinstance(entries, list):
+        raise ArmourError('"overlays.entries" in pack.mcmeta must be a list')
+    validated: list[dict[str, Any]] = []
     for entry in entries:
+        if not isinstance(entry, dict):
+            raise ArmourError(f"Overlay entry must be an object: {entry!r}")
         directory = entry.get("directory")
-        if not directory:
-            msg = f"Overlay entry has no directory: {entry!r}"
-            raise ArmourError(msg)
+        if not isinstance(directory, str) or not directory.strip():
+            raise ArmourError(f"Overlay entry has no valid directory: {entry!r}")
         path = PurePosixPath(directory)
-        if path.is_absolute() or ".." in path.parts:
-            msg = f"Overlay directory must stay inside the repo: {directory!r}"
+        if (
+            path.is_absolute()
+            or not path.parts
+            or "\\" in directory
+            or ".." in path.parts
+            or ":" in path.parts[0]
+        ):
+            msg = f"Overlay directory must stay inside the pack: {directory!r}"
             raise ArmourError(msg)
-    return list(entries)
+        validated.append(entry)
+    return validated
+
+
+def _reject_pack_symlinks(repo: Path) -> None:
+    """Reject symlinks anywhere in the source pack before reading or copying it."""
+    for source in repo.rglob("*"):
+        if source.is_symlink():
+            msg = f"Symbolic links are not supported in data packs: {source}"
+            raise ArmourError(msg)
 
 
 def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, str]:
@@ -178,7 +235,11 @@ def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, s
     Returns {path in the flattened pack: path in the repo} for each file copied.
     """
     copied: dict[str, str] = {}
+    if not data_dir.is_dir():
+        raise ArmourError(f"Data directory does not exist: {data_dir}")
     for path in sorted(data_dir.rglob("*")):
+        if path.is_symlink():
+            raise ArmourError(f"Symbolic links are not supported in data packs: {path}")
         if not path.is_file():
             continue
         relative = path.relative_to(data_dir.parent)  # keeps the leading `data/`
@@ -189,41 +250,483 @@ def copy_data_tree(data_dir: Path, destination: Path, repo: Path) -> dict[str, s
     return copied
 
 
-def build_flattened_pack(repo: Path, out: Path, fmt: Format) -> BuildResult:
-    """Build the plain pack for data pack format `fmt` in the (fresh) folder `out`."""
-    mcmeta = load_mcmeta(repo)
-    entries = overlay_entries(mcmeta)
-
-    if out.exists():
-        shutil.rmtree(out)
-    out.mkdir(parents=True)
-    result = BuildResult(fmt=fmt)
-
-    shutil.copyfile(repo / "pack.mcmeta", out / "pack.mcmeta")
-    # spyglass.json (lint rules) travels with the pack so Spyglass picks it up.
-    if (repo / "spyglass.json").exists():
-        shutil.copyfile(repo / "spyglass.json", out / "spyglass.json")
-
-    root_files = copy_data_tree(repo / "data", out, repo)
-    result.source_map.update(root_files)
-    result.applied.append(f"data/ ({len(root_files)} files)")
-
+def validate_overlay_sources(repo: Path, entries: list[dict[str, Any]]) -> None:
+    """Validate all overlay paths and metadata before modifying build output."""
+    repo = repo.resolve()
     for entry in entries:
         directory = entry["directory"]
-        low, high = overlay_range(entry)
-        if not low <= fmt <= high:
-            continue
-        overlay_data = repo / directory / "data"
-        if not overlay_data.is_dir():
-            msg = (
-                f"pack.mcmeta lists overlay '{directory}' "
-                f"but {overlay_data} does not exist"
+        overlay_root = (repo / directory).resolve()
+        if not overlay_root.is_relative_to(repo):
+            raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
+        if not (overlay_root / "data").is_dir():
+            raise ArmourError(
+                f"pack.mcmeta lists overlay '{directory}' but "
+                f"{overlay_root / 'data'} does not exist"
             )
-            raise ArmourError(msg)
-        overlay_files = copy_data_tree(overlay_data, out, repo)
-        result.source_map.update(overlay_files)
-        result.applied.append(f"{directory}/ ({len(overlay_files)} files)")
-    return result
+        _reject_pack_symlinks(overlay_root)
+
+
+def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
+    repo: Path, out: Path, fmt: Format, *, source_root: Path | None = None
+) -> BuildResult:
+    """Build to a temporary sibling, preserving the last successful output."""
+    mcmeta = load_mcmeta(repo)
+    entries = overlay_entries(mcmeta)
+    for entry in entries:
+        overlay_range(entry)
+    _reject_pack_symlinks(repo)
+    validate_overlay_sources(repo, entries)
+    source_root = (source_root or repo).resolve()
+    repo = repo.resolve()
+    out = out.absolute()
+    reject_symlink_components(out, Path(out.anchor))
+    out = out.resolve()
+    build_root = source_root / "build"
+    root_pack_build_output = (
+        repo == source_root and out.is_relative_to(build_root) and out != build_root
+    )
+    if paths_overlap(out, repo) and not root_pack_build_output:
+        raise ArmourError(f"Build output must not overlap the source pack: {out}")
+    if out.is_relative_to(source_root) and (
+        not out.is_relative_to(build_root) or out == build_root
+    ):
+        raise ArmourError(
+            "Build output inside the repository must be a dedicated subdirectory "
+            f"of {build_root}: {out}"
+        )
+    if out.exists() and not out.is_dir():
+        raise ArmourError(f"Build output exists and is not a directory: {out}")
+
+    temp = out.with_name(f".{out.name}.armour-tmp")
+    backup = out.with_name(f".{out.name}.armour-backup")
+    for candidate in (temp, backup):
+        reject_symlink_components(candidate, Path(candidate.anchor))
+        if candidate.exists():
+            raise ArmourError(
+                f"Temporary build path already exists; refusing cleanup: {candidate}"
+            )
+
+    out_existed = out.exists()
+    temp.mkdir(parents=True)
+    backup_created = False
+    try:
+        result = BuildResult(fmt=fmt)
+        shutil.copyfile(repo / "pack.mcmeta", temp / "pack.mcmeta")
+        if (repo / "spyglass.json").exists():
+            shutil.copyfile(repo / "spyglass.json", temp / "spyglass.json")
+        root_files = copy_data_tree(repo / "data", temp, source_root)
+        result.source_map.update(root_files)
+        result.applied.append(f"data/ ({len(root_files)} files)")
+        for entry in entries:
+            directory = entry["directory"]
+            low, high = overlay_range(entry)
+            if low <= fmt <= high:
+                overlay_root = (repo / directory).resolve()
+                overlay_files = copy_data_tree(overlay_root / "data", temp, source_root)
+                result.source_map.update(overlay_files)
+                result.applied.append(f"{directory}/ ({len(overlay_files)} files)")
+        if out.exists():
+            out.rename(backup)
+            backup_created = True
+        temp.rename(out)
+    except BaseException:
+        if temp.exists():
+            shutil.rmtree(temp, ignore_errors=True)
+        # Restore whenever a backup exists, including interruption between rename
+        # and setting the bookkeeping flag.
+        if backup.exists():
+            if out.exists():
+                shutil.rmtree(out, ignore_errors=True)
+            backup.rename(out)
+        elif not out_existed and out.exists():
+            # A first build interrupted after install has no previous output.
+            shutil.rmtree(out, ignore_errors=True)
+        raise
+    else:
+        if backup_created:
+            shutil.rmtree(backup, ignore_errors=True)
+        return result
+
+
+def validate_source_map_path(
+    path: Path, repo: Path, pack_root: Path, out: Path
+) -> Path:
+    """Validate and return a source-map destination without writing anything."""
+    source_map = path if path.is_absolute() else repo / path
+    source_map = source_map.absolute()
+    reject_symlink_components(source_map, Path(source_map.anchor))
+    source_map = source_map.resolve()
+    pack_build_root = repo / "build"
+    source_map_in_root_pack_build = (
+        pack_root == repo
+        and source_map.is_relative_to(pack_build_root)
+        and source_map != pack_build_root
+    )
+    if (
+        source_map == pack_root
+        or (pack_root in source_map.parents and not source_map_in_root_pack_build)
+        or source_map in pack_root.parents
+    ):
+        msg = f"Source map must not overwrite the source pack: {source_map}"
+        raise ArmourError(msg)
+    if source_map == out or out in source_map.parents or source_map in out.parents:
+        raise ArmourError(f"Source map must not overlap build output: {source_map}")
+    try:
+        common_parent = Path(os.path.commonpath((out.parent, source_map.parent)))
+    except ValueError:  # Different Windows drives have no common parent.
+        common_parent = None
+    if common_parent == repo or (
+        source_map.is_relative_to(repo)
+        and (common_parent is None or not common_parent.is_relative_to(repo))
+    ):
+        raise ArmourError(
+            "Source map and build output must share a dedicated output directory "
+            f"below {repo}, not write into repository source files"
+        )
+
+    if source_map.exists() and not source_map.is_file():
+        raise ArmourError(f"Source map must be a file path: {source_map}")
+    for parent in source_map.parents:
+        if parent.exists() and not parent.is_dir():
+            raise ArmourError(f"Source-map parent is not a directory: {parent}")
+    temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(f"Source-map temporary path already exists: {temporary}")
+    return source_map
+
+
+def write_source_map(
+    path: Path, result: BuildResult, repo: Path, pack_root: Path, out: Path
+) -> None:
+    """Write the source map atomically without replacing source files."""
+    source_map = validate_source_map_path(path, repo, pack_root, out)
+    temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(f"Source-map temporary path already exists: {temporary}")
+    source_map.parent.mkdir(parents=True, exist_ok=True)
+    reject_symlink_components(temporary, Path(temporary.anchor))
+    created = False
+    descriptor: int | None = None
+    try:
+        flags = (
+            os.O_CREAT
+            | os.O_EXCL
+            | os.O_WRONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_BINARY", 0)
+        )
+        descriptor = os.open(temporary, flags, 0o600)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = None
+            json.dump(result.source_map, stream, indent=1)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(source_map)
+    except BaseException:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created:
+            temporary.unlink(missing_ok=True)
+        raise
+
+
+def write_transaction_journal(journal: Path, state: dict[str, Any]) -> None:
+    """Atomically replace a transaction journal without following temp symlinks."""
+    temporary = journal.with_name(f".{journal.name}.tmp")
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(
+            f"Transaction journal temporary path already exists: {temporary}"
+        )
+    for candidate in (journal, temporary):
+        reject_symlink_components(candidate, Path(candidate.anchor))
+    if temporary.exists() or temporary.is_symlink():
+        raise ArmourError(
+            f"Transaction journal temporary path already exists: {temporary}"
+        )
+    created = False
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            created = True
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(journal)
+    except BaseException:
+        # Never remove a path unless this invocation successfully created it.
+        if created:
+            temporary.unlink(missing_ok=True)
+        raise
+
+
+def recover_main_transaction(  # noqa: C901, PLR0912, PLR0915
+    out: Path, source_map_path: Path | None
+) -> None:
+    """Recover an interrupted output/source-map commit using its journal."""
+    journal = out.with_name(f".{out.name}.armour-main-transaction.json")
+    if not journal.exists():
+        return
+    reject_symlink_components(journal, Path(journal.anchor))
+    try:
+        state = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ArmourError(
+            f"Cannot read transaction journal {journal}: {error}"
+        ) from error
+    expected_keys = {
+        "schema_version",
+        "out_existed",
+        "map_existed",
+        "committed",
+        "map_path",
+    }
+    if (
+        not isinstance(state, dict)
+        or set(state) != expected_keys
+        or type(state.get("schema_version")) is not int
+        or state.get("schema_version") != 1
+        or not all(
+            isinstance(state.get(key), bool)
+            for key in ("out_existed", "map_existed", "committed")
+        )
+        or state.get("map_path")
+        != (str(source_map_path) if source_map_path is not None else None)
+        or (source_map_path is None and state.get("map_existed"))
+    ):
+        raise ArmourError(f"Invalid or mismatched transaction journal: {journal}")
+
+    out_backup = out.with_name(f".{out.name}.armour-main-backup")
+    staged_out = out.with_name(f".{out.name}.armour-main-stage")
+    map_backup = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-backup")
+        if source_map_path
+        else None
+    )
+    staged_map = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-stage")
+        if source_map_path
+        else None
+    )
+    for path in (out, out_backup, staged_out, source_map_path, map_backup, staged_map):
+        if path is not None:
+            reject_symlink_components(path, Path(path.anchor))
+
+    def exists(path: Path | None) -> bool:
+        return path is not None and path.exists()
+
+    invalid_out_backup = exists(out_backup) and (
+        not state["out_existed"] or not out_backup.is_dir()
+    )
+    invalid_staged_out = exists(staged_out) and not staged_out.is_dir()
+    invalid_map_backup = exists(map_backup) and (
+        not state["map_existed"] or not map_backup.is_file()
+    )
+    invalid_staged_map = exists(staged_map) and not staged_map.is_file()
+    if (
+        invalid_out_backup
+        or invalid_staged_out
+        or invalid_map_backup
+        or invalid_staged_map
+    ):
+        raise ArmourError(
+            f"Inconsistent transaction journal filesystem state: {journal}"
+        )
+
+    # Validate every artifact before changing any of them. This prevents a
+    # later map inconsistency from being discovered only after the pack was
+    # already deleted or restored.
+    if state["committed"]:
+        valid = (
+            out.is_dir()
+            and (source_map_path is None or source_map_path.is_file())
+            and not exists(staged_out)
+            and not exists(staged_map)
+        )
+    else:
+        if state["out_existed"]:
+            backup_restorable = exists(out_backup) and (
+                not out.exists() or out.is_dir()
+            )
+            stage_restorable = (
+                not exists(out_backup) and out.is_dir() and exists(staged_out)
+            )
+            valid_out = backup_restorable or stage_restorable
+        else:
+            valid_out = exists(out) != exists(staged_out)
+            valid_out = valid_out and not exists(out_backup)
+
+        if source_map_path is None:
+            valid_map = True
+        elif state["map_existed"]:
+            backup_restorable = exists(map_backup) and (
+                not source_map_path.exists() or source_map_path.is_file()
+            )
+            stage_restorable = (
+                not exists(map_backup)
+                and source_map_path.is_file()
+                and exists(staged_map)
+            )
+            valid_map = backup_restorable or stage_restorable
+        else:
+            map_destination_exclusive = exists(source_map_path) != exists(staged_map)
+            valid_map = map_destination_exclusive and not exists(map_backup)
+        valid = valid_out and valid_map
+
+    if not valid:
+        raise ArmourError(
+            f"Ambiguous or inconsistent transaction filesystem state; "
+            f"preserving {journal}"
+        )
+
+    if state["committed"]:
+        if exists(out_backup):
+            shutil.rmtree(out_backup)
+        if exists(map_backup):
+            map_backup.unlink()
+    else:
+        if exists(out_backup) and out.exists():
+            shutil.rmtree(out)
+        if exists(out_backup):
+            out_backup.rename(out)
+        elif not state["out_existed"] and out.exists():
+            shutil.rmtree(out)
+
+        if map_backup is not None and exists(map_backup):
+            source_map_path.unlink(missing_ok=True)
+            map_backup.rename(source_map_path)
+        elif (
+            source_map_path is not None
+            and not state["map_existed"]
+            and source_map_path.exists()
+        ):
+            source_map_path.unlink()
+
+    if exists(staged_out):
+        shutil.rmtree(staged_out)
+    if exists(staged_map):
+        staged_map.unlink()
+    journal.unlink()
+
+
+def validate_transaction_paths(out: Path, source_map_path: Path | None) -> None:
+    """Reject collisions among outputs and their transaction metadata paths."""
+    staged_out = out.with_name(f".{out.name}.armour-main-stage")
+    paths: list[tuple[str, Path]] = [
+        ("build output", out),
+        ("staged build output", staged_out),
+        ("build backup", out.with_name(f".{out.name}.armour-main-backup")),
+        (
+            "journal",
+            out.with_name(f".{out.name}.armour-main-transaction.json"),
+        ),
+        (
+            "journal temporary",
+            out.with_name(f"..{out.name}.armour-main-transaction.json.tmp"),
+        ),
+        ("build lock", out.with_name(f".{out.name}.armour-main-lock")),
+        (
+            "staged build temporary",
+            staged_out.with_name(f".{staged_out.name}.armour-tmp"),
+        ),
+        (
+            "staged build backup",
+            staged_out.with_name(f".{staged_out.name}.armour-backup"),
+        ),
+    ]
+    if source_map_path is not None:
+        paths.extend(
+            [
+                ("source map", source_map_path),
+                (
+                    "staged source map",
+                    source_map_path.with_name(
+                        f".{source_map_path.name}.armour-main-stage"
+                    ),
+                ),
+                (
+                    "source-map backup",
+                    source_map_path.with_name(
+                        f".{source_map_path.name}.armour-main-backup"
+                    ),
+                ),
+                (
+                    "source-map lock",
+                    source_map_path.with_name(
+                        f".{source_map_path.name}.armour-main-lock"
+                    ),
+                ),
+            ]
+        )
+    for index, (left_name, left_path) in enumerate(paths):
+        for right_name, right_path in paths[index + 1 :]:
+            if paths_overlap(left_path, right_path):
+                raise ArmourError(
+                    f"Transaction paths overlap ({left_name} and {right_name}): "
+                    f"{left_path} / {right_path}"
+                )
+
+
+@contextmanager
+def main_transaction_lock(  # noqa: PLR0912
+    out: Path, source_map_path: Path | None = None
+) -> Iterator[None]:
+    """Serialize builds sharing either destination using OS-managed locks."""
+    destinations = [out]
+    if source_map_path is not None:
+        destinations.append(source_map_path)
+    lock_paths = [
+        path.with_name(f".{path.name}.armour-main-lock") for path in destinations
+    ]
+    lock_paths.sort(key=str)
+    acquired: list[int] = []
+    windows = os.name == "nt"
+    lock_module = importlib.import_module("msvcrt" if windows else "fcntl")
+    try:
+        for lock_path in lock_paths:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            reject_symlink_components(lock_path, Path(lock_path.anchor))
+            flags = (
+                os.O_CREAT
+                | os.O_RDWR
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_BINARY", 0)
+            )
+            descriptor = os.open(lock_path, flags, 0o600)
+            try:
+                if windows:
+                    if os.fstat(descriptor).st_size == 0:
+                        os.write(descriptor, b"0")
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    try:
+                        lock_module.locking(descriptor, lock_module.LK_NBLCK, 1)
+                    except OSError as error:
+                        raise ArmourError(
+                            f"Another build is using transaction lock {lock_path}"
+                        ) from error
+                else:
+                    try:
+                        lock_module.flock(
+                            descriptor, lock_module.LOCK_EX | lock_module.LOCK_NB
+                        )
+                    except OSError as error:
+                        raise ArmourError(
+                            f"Another build is using transaction lock {lock_path}"
+                        ) from error
+            except BaseException:
+                os.close(descriptor)
+                raise
+            acquired.append(descriptor)
+        yield
+    finally:
+        for descriptor in reversed(acquired):
+            try:
+                if windows:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    lock_module.locking(descriptor, lock_module.LK_UNLCK, 1)
+                else:
+                    lock_module.flock(descriptor, lock_module.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -234,10 +737,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--repo", default=".", help="repository root (contains pack.mcmeta and data/)"
     )
+    parser.add_argument("--pack-path", help="data pack directory relative to --repo")
     parser.add_argument("--server-url", help="Mojang server.jar URL for this version")
     parser.add_argument("--sha1", help="expected SHA-1 of the server jar")
     parser.add_argument(
-        "--cache-dir", default=".mc-cache", help="where server jars are cached"
+        "--cache-dir", help="where server jars are cached (defaults to a sibling cache)"
     )
     parser.add_argument(
         "--pack-version", help="testing only: pack_version JSON instead of downloading"
@@ -251,37 +755,144 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     """Command-line entry point."""
     args = parse_args(argv)
-
-    if args.pack_version is not None:
+    download_version = args.pack_version is None
+    if download_version and not (args.server_url and args.sha1):
+        raise ArmourError("Give either --server-url and --sha1, or --pack-version")
+    pack_version = None
+    if not download_version:
         try:
             pack_version = json.loads(args.pack_version)
         except json.JSONDecodeError as error:
-            msg = f"--pack-version is not valid JSON: {error}"
-            raise ArmourError(msg) from error
-    elif args.server_url and args.sha1:
-        jar = download_server_jar(args.server_url, args.sha1, Path(args.cache_dir))
-        pack_version = read_version_json(jar).get("pack_version")
-    else:
-        msg = "Give either --server-url and --sha1, or --pack-version"
-        raise ArmourError(msg)
+            raise ArmourError(f"--pack-version is not valid JSON: {error}") from error
+    repo = Path(args.repo).resolve()
 
-    result = build_flattened_pack(
-        Path(args.repo).resolve(), Path(args.out).resolve(), data_format(pack_version)
+    pack_root = resolve_pack_root(repo, args.pack_path)
+    cache_dir = (
+        Path(args.cache_dir)
+        if args.cache_dir is not None
+        else repo.parent / f".{repo.name}-mc-cache"
     )
+    if not cache_dir.is_absolute():
+        cache_dir = repo / cache_dir
+    if download_version:
+        cache_dir = cache_dir.absolute()
+        reject_symlink_components(cache_dir, Path(cache_dir.anchor))
+        cache_dir = cache_dir.resolve()
+        if paths_overlap(cache_dir, repo):
+            raise ArmourError(
+                "Cache directory must be outside the consuming repository "
+                f"and source pack: {cache_dir}"
+            )
 
+    out = Path(args.out)
+    if not out.is_absolute():
+        out = repo / out
+    out = out.absolute()
+    reject_symlink_components(out, Path(out.anchor))
+    out = out.resolve()
+    source_map_path = None
     if args.source_map:
-        source_map = Path(args.source_map)
-        source_map.parent.mkdir(parents=True, exist_ok=True)
-        source_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+        source_map_path = Path(args.source_map)
+        if not source_map_path.is_absolute():
+            source_map_path = repo / source_map_path
+        source_map_path = source_map_path.absolute()
+        validate_source_map_path(source_map_path, repo, pack_root, out)
 
-    label = f"{result.fmt[0]}.{result.fmt[1]}"
-    applied = " + ".join(result.applied)
-    print(f"Data pack format {label}: applied {applied}")
-    append_summary(f"Data pack format `{label}` → {applied}")
-    return 0
+    if download_version:
+        if paths_overlap(cache_dir, out):
+            raise ArmourError("Cache directory and build output must not overlap")
+        if source_map_path is not None and paths_overlap(cache_dir, source_map_path):
+            raise ArmourError("Cache directory and source map must not overlap")
+        jar = download_server_jar(args.server_url, args.sha1, cache_dir)
+        pack_version = read_version_json(jar).get("pack_version")
+
+    fmt = data_format(pack_version)
+    staged_out = out.with_name(f".{out.name}.armour-main-stage")
+    out_backup = out.with_name(f".{out.name}.armour-main-backup")
+    staged_map = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-stage")
+        if source_map_path is not None
+        else None
+    )
+    map_backup = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-backup")
+        if source_map_path is not None
+        else None
+    )
+    validate_transaction_paths(out, source_map_path)
+    with main_transaction_lock(out, source_map_path):
+        recover_main_transaction(out, source_map_path)
+        for candidate in (staged_out, out_backup, staged_map, map_backup):
+            if candidate is not None:
+                reject_symlink_components(candidate, Path(candidate.anchor))
+                if candidate.exists():
+                    raise ArmourError(
+                        "Transaction staging path already exists; refusing cleanup: "
+                        f"{candidate}"
+                    )
+        try:
+            result = build_flattened_pack(pack_root, staged_out, fmt, source_root=repo)
+            if staged_map is not None:
+                staged_map.parent.mkdir(parents=True, exist_ok=True)
+                with staged_map.open("x", encoding="utf-8") as stream:
+                    json.dump(result.source_map, stream, indent=1)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+        except BaseException:
+            if staged_out.exists():
+                shutil.rmtree(staged_out, ignore_errors=True)
+            if staged_map is not None:
+                staged_map.unlink(missing_ok=True)
+            raise
+
+        out_existed_before_commit = out.exists()
+        map_existed_before_commit = (
+            source_map_path.exists() if source_map_path is not None else False
+        )
+        journal = out.with_name(f".{out.name}.armour-main-transaction.json")
+        journal_state = {
+            "schema_version": 1,
+            "out_existed": out_existed_before_commit,
+            "map_existed": map_existed_before_commit,
+            "committed": False,
+            "map_path": str(source_map_path) if source_map_path is not None else None,
+        }
+        write_transaction_journal(journal, journal_state)
+        try:
+            if out_existed_before_commit:
+                out.rename(out_backup)
+            if map_existed_before_commit:
+                source_map_path.rename(map_backup)
+            staged_out.rename(out)
+            if source_map_path is not None:
+                staged_map.rename(source_map_path)
+        except BaseException:
+            # Use the same validated recovery path as a later process restart.
+            # If recovery cannot prove the state, it preserves the journal/files.
+            recover_main_transaction(out, source_map_path)
+            raise
+        else:
+            journal_state["committed"] = True
+            write_transaction_journal(journal, journal_state)
+            if out_backup.exists():
+                shutil.rmtree(out_backup)
+            if map_backup is not None and map_backup.exists():
+                map_backup.unlink(missing_ok=True)
+            journal.unlink(missing_ok=True)
+        finally:
+            if staged_out.exists():
+                shutil.rmtree(staged_out, ignore_errors=True)
+            if staged_map is not None:
+                staged_map.unlink(missing_ok=True)
+
+        label = f"{result.fmt[0]}.{result.fmt[1]}"
+        applied = " + ".join(result.applied)
+        print(f"Data pack format {label}: applied {applied}")
+        append_summary(f"Data pack format `{label}` → {applied}")
+        return 0
 
 
 if __name__ == "__main__":

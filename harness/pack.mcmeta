@@ -1,0 +1,16 @@
+{
+	"pack": {
+		"description": [
+            {
+                "text": "ARMOUR Test Suite\n",
+                "color": "gold"
+            },
+            {
+                "text": "Made by Monkeymad358",
+                "color": "yellow"
+            }
+		],
+		"min_format": 88,
+		"max_format": [121, 0]
+	}
+}

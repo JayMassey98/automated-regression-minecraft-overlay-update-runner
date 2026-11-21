@@ -3,14 +3,19 @@
 
 Steps:
   1. Download the version's server.jar (checked against its SHA-1, cached).
-  2. Stage the data pack (with its real pack.mcmeta overlays) and the tests
-     pack into a fresh world. Only `max_format` is widened, so snapshots whose
-     pack format is newer than the declared one still load.
-  3. Start the server, run `/function <tests namespace>:harness/start`, and
-     read the ET_* result lines the tests print to the server log.
+  2. Stage the data pack (with its real pack.mcmeta overlays), the tests pack
+     and ARMOUR's shared harness pack into a fresh world. Only `max_format` is
+     widened, so snapshots whose pack format is newer than the declared one
+     still load.
+  3. Start the server, run `/function armour:harness/start`, and read the
+     ARMOUR_* result lines the tests print to the server log.
   4. Stop the server and report. Fails when a test fails, when any pack file
      logs a load error (broken recipe, tag, function...), or when no result
      arrives.
+
+With --load-only, for packs that have no function tests (such as world
+generation packs), only the data pack is staged. The server must start and log
+no load errors for the pack; no tests are run.
 
 Exit codes: 0 = all tests passed, 1 = failures or problems.
 """
@@ -38,17 +43,27 @@ from armour_common import (
     download_server_jar,
     run,
 )
-from build_version_pack import load_mcmeta, overlay_entries
+from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
+from build_version_pack import (
+    load_mcmeta,
+    main_transaction_lock,
+    overlay_entries,
+    overlay_range,
+    validate_overlay_sources,
+)
 from generate_test_runner import generate
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
     from typing import TextIO
 
+# ARMOUR's shared harness data pack (the `harness/` folder next to `scripts/`).
+HARNESS_PACK_DIR = Path(__file__).resolve().parent.parent / "harness"
+
 WIDE_MAX_FORMAT = [9999, 0]
 
 JAVA_HEAP = "-Xmx2G"
-SERVER_PORT = 25599
+SERVER_PORT = 0
 SERVER_STOP_TIMEOUT_SECONDS = 90
 READER_JOIN_TIMEOUT_SECONDS = 10
 # Pauses that let the log catch up: after `datapack list`, and after the result.
@@ -72,7 +87,7 @@ sync-chunk-writes=false
 enable-rcon=false
 enable-query=false
 server-port={SERVER_PORT}
-initial-enabled-packs=vanilla,file/{{pack_name}},file/{{tests_namespace}}
+initial-enabled-packs=vanilla,{{enabled_packs}}
 """
 
 # A line like "[12:00:00] [Server thread/ERROR]: ..." (we then check it mentions
@@ -85,19 +100,6 @@ LOG_RECORD_RE = re.compile(r"^\[\d\d:\d\d:\d\d\]")
 LOAD_ERROR_DETAIL_LINES = 8
 MAX_LOAD_WARNINGS_SHOWN = 20
 LOG_TAIL_LINES = 60
-
-# Files every tests pack must have. If they are missing, the tests folder was not
-# fully updated.
-REQUIRED_TEST_FILES = (
-    "harness/start.mcfunction",
-    "harness/run.mcfunction",
-    "harness/fail.mcfunction",
-    "harness/end_test.mcfunction",
-    "assert/block.mcfunction",
-)
-# Left over from the earlier vanilla GameTest attempt. They are not used and would
-# only add load errors.
-LEGACY_GAMETEST_FOLDERS = ("test_instance", "test_environment", "structure")
 
 
 # =============================================================================
@@ -115,6 +117,13 @@ def widen_max_format(mcmeta_path: Path) -> None:
     mcmeta_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
+def _reject_symlinks(root: Path) -> None:
+    """Reject source symlinks so staging cannot read outside the source tree."""
+    for path in root.rglob("*"):
+        if path.is_symlink():
+            raise ArmourError(f"Symbolic links are not supported in data packs: {path}")
+
+
 def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     """Copy the shipped pack: pack.mcmeta, data/, and every overlay folder.
 
@@ -123,48 +132,66 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     max_format.
     """
     entries = overlay_entries(load_mcmeta(repo))
+    for entry in entries:
+        overlay_range(entry)
+    validate_overlay_sources(repo, entries)
+    _reject_symlinks(repo)
     destination.mkdir(parents=True)
     shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
     shutil.copytree(repo / "data", destination / "data")
     for entry in entries:
         directory = entry["directory"]
-        if not (repo / directory).is_dir():
+        overlay_root = (repo / directory).resolve()
+        if not overlay_root.is_relative_to(repo.resolve()):
+            raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
+        if not overlay_root.is_dir():
             msg = (
                 f"pack.mcmeta lists overlay '{directory}' "
-                f"but {repo / directory} does not exist"
+                f"but {overlay_root} does not exist"
             )
             raise ArmourError(msg)
-        shutil.copytree(repo / directory, destination / directory)
+        shutil.copytree(overlay_root, destination / directory)
     if widen:
         widen_max_format(destination / "pack.mcmeta")
+
+
+def stage_harness_pack(destination: Path) -> None:
+    """Copy ARMOUR's shared harness pack, with `max_format` widened."""
+    if not (HARNESS_PACK_DIR / "pack.mcmeta").is_file():
+        msg = (
+            f"ARMOUR's harness pack is missing from {HARNESS_PACK_DIR}. "
+            "If ARMOUR is a submodule, run `git submodule update --init`."
+        )
+        raise ArmourError(msg)
+    shutil.copytree(HARNESS_PACK_DIR, destination)
+    widen_max_format(destination / "pack.mcmeta")
 
 
 def stage_tests_pack(tests: Path, destination: Path, namespace: str) -> int:
     """Copy the tests pack, regenerate its runner and return how many tests it has."""
     function_dir = tests / "data" / namespace / "function"
-    missing = [
-        name for name in REQUIRED_TEST_FILES if not (function_dir / name).is_file()
-    ]
-    if missing:
+    if not function_dir.is_dir():
         msg = (
-            f"The tests folder is missing {', '.join(missing)}. Copy the whole "
-            "tests/ folder from the test harness zip into the repo, then try again."
+            f"The tests folder has no {function_dir.relative_to(tests)} folder, "
+            f"so there are no tests to run (looked in {tests})."
         )
         raise ArmourError(msg)
-    shutil.copytree(
-        tests, destination, ignore=shutil.ignore_patterns(*LEGACY_GAMETEST_FOLDERS)
-    )
+    _reject_symlinks(tests)
+    shutil.copytree(tests, destination)
     count = generate(destination, namespace)  # never run a stale test list
     widen_max_format(destination / "pack.mcmeta")
     return count
 
 
-def write_server_files(work: Path, pack_name: str, tests_namespace: str) -> None:
-    """Accept the EULA and write server.properties for the test server."""
+def write_server_files(work: Path, pack_names: Sequence[str]) -> None:
+    """Accept the EULA and write server.properties, enabling these packs.
+
+    Each name is also the name of the pack's folder in the world's `datapacks`.
+    """
+    enabled = ",".join(f"file/{name}" for name in pack_names)
     (work / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     (work / "server.properties").write_text(
-        SERVER_PROPERTIES.format(pack_name=pack_name, tests_namespace=tests_namespace),
-        encoding="utf-8",
+        SERVER_PROPERTIES.format(enabled_packs=enabled), encoding="utf-8"
     )
 
 
@@ -287,25 +314,32 @@ def launch_server(
 def run_tests_on_server(
     command: Sequence[str],
     work: Path,
-    start_command: str,
+    start_command: str | None,
     *,
     startup_timeout: float,
     test_timeout: float,
 ) -> tuple[list[str], str | None]:
-    """Run the harness and return (server log lines, a problem description or None)."""
+    """Run the harness and return (server log lines, a problem description or None).
+
+    With `start_command=None` no tests are run: the server just has to start.
+    """
     lines: list[str] = []
     problem = None
     with launch_server(command, work, work / "server-output.log") as server:
         if server.wait_for("Done (", startup_timeout, lines) is None:
             problem = "The server did not finish starting"
         else:
-            server.send(start_command)
-            if server.wait_for("ET_RESULT", test_timeout, lines) is None:
-                problem = "The tests did not report a result (see the server log below)"
-                # Show which data packs the server has enabled, to help diagnose.
-                server.send("datapack list")
-                server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
-            # Give the log a moment to flush anything printed after the result.
+            if start_command is not None:
+                server.send(start_command)
+                if server.wait_for("ARMOUR_RESULT", test_timeout, lines) is None:
+                    problem = (
+                        "The tests did not report a result (see the server log below)"
+                    )
+                    # Show which data packs the server has enabled, to help diagnose.
+                    server.send("datapack list")
+                    server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
+            # Give the log a moment to flush anything printed after the result
+            # (or, with no tests, after the server finished starting).
             server.wait_for(None, FLUSH_PAUSE_SECONDS, lines)
         # Anything the server prints while stopping can still hold load errors.
         server.stop()
@@ -323,13 +357,11 @@ class Analysis:
     """What the server log says about the test run."""
 
     fails: list[str] = field(default_factory=list)
-    skips: int = 0
     counts: str | None = None
     result: str | None = None
     errors: list[str] = field(default_factory=list)
     load_errors: list[str] = field(default_factory=list)
     load_warnings: list[str] = field(default_factory=list)
-    diag: list[str] = field(default_factory=list)
 
 
 def _after(line: str, marker: str) -> str:
@@ -337,22 +369,40 @@ def _after(line: str, marker: str) -> str:
 
 
 def _record_harness_line(found: Analysis, line: str) -> bool:
-    """File an `ET_*` line from the test harness; False if it is not one."""
-    if "ET_FAIL " in line:
-        found.fails.append(_after(line, "ET_FAIL "))
-    elif "ET_SKIP " in line:
-        found.skips += 1
-    elif "ET_COUNTS " in line:
-        found.counts = _after(line, "ET_COUNTS ")
-    elif "ET_RESULT " in line:
-        found.result = _after(line, "ET_RESULT ")
-    elif "ET_DIAG " in line:
-        found.diag.append(_after(line, "ET_DIAG "))
-    elif "ET_ERROR " in line:
-        found.errors.append(_after(line, "ET_ERROR "))
+    """File an `ARMOUR_*` line from the test harness; False if it is not one."""
+    if "ARMOUR_FAIL " in line:
+        found.fails.append(_after(line, "ARMOUR_FAIL "))
+    elif "ARMOUR_SKIP " in line:
+        pass  # only for people reading the log; the totals already count them
+    elif "ARMOUR_COUNTS " in line:
+        found.counts = _after(line, "ARMOUR_COUNTS ")
+    elif "ARMOUR_RESULT " in line:
+        found.result = _after(line, "ARMOUR_RESULT ")
+    elif "ARMOUR_ERROR " in line:
+        found.errors.append(_after(line, "ARMOUR_ERROR "))
     else:
         return False
     return True
+
+
+def _record_registry_failure(found: Analysis, lines: Sequence[str], index: int) -> None:
+    """File a "Failed to parse X from pack ..." exception that stops the server.
+
+    Registry loading errors are printed as stack traces with no log level, so
+    they need their own rule. The first `Caused by:` line says what was wrong.
+    """
+    line = lines[index]
+    if "Failed to parse " not in line or " from pack " not in line:
+        return
+    cause = next(
+        (
+            following.strip()
+            for following in lines[index + 1 : index + 1 + LOAD_ERROR_DETAIL_LINES]
+            if following.lstrip().startswith("Caused by:")
+        ),
+        "",
+    )
+    found.load_errors.append("\n".join(filter(None, [line.strip(), cause])))
 
 
 def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> None:
@@ -360,6 +410,7 @@ def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> N
     line = lines[index]
     level = LOG_LEVEL_RE.search(line)
     if level is None:
+        _record_registry_failure(found, lines, index)
         return
     if level.group(1) == "WARN":
         found.load_warnings.append(line)
@@ -374,7 +425,7 @@ def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> N
 
 
 def analyse(lines: Sequence[str], pack_names: Sequence[str]) -> Analysis:
-    """Sort the log's ET_* lines and any errors mentioning our packs."""
+    """Sort the log's ARMOUR_* lines and any errors mentioning our packs."""
     found = Analysis()
     for index, line in enumerate(lines):
         if _record_harness_line(found, line):
@@ -385,31 +436,34 @@ def analyse(lines: Sequence[str], pack_names: Sequence[str]) -> Analysis:
 
 
 def report(
-    version: str, found: Analysis, problem: str | None, lines: list[str]
+    version: str,
+    found: Analysis,
+    problem: str | None,
+    lines: list[str],
+    *,
+    load_only: bool = False,
 ) -> bool:
-    """Print annotations and the summary; return True when everything passed."""
+    """Print annotations and the summary; return True when everything passed.
+
+    With `load_only` no test result is expected, only a clean start.
+    """
     for warning in found.load_warnings[:MAX_LOAD_WARNINGS_SHOWN]:
         annotate("warning", f"Pack log warning ({version})", warning)
     for error in found.load_errors:
         annotate("error", f"Pack failed to load ({version})", error)
     for error in found.errors:
         annotate("error", f"Test harness ({version})", error)
-    if found.diag:
-        print("---- diagnostics ----")
-        for entry in found.diag:
-            print(f"ET_DIAG {entry}")
-        print("---- end diagnostics ----")
     for failure in found.fails:
         annotate("error", f"Test failed ({version})", failure)
 
     ok = (
         problem is None
-        and found.result == "PASSED"
+        and (load_only or found.result == "PASSED")
         and not found.fails
         and not found.load_errors
         and not found.errors
     )
-    totals = found.counts or "no totals reported"
+    totals = "load only" if load_only else found.counts or "no totals reported"
     status = "🟢 passed" if ok else "🔴 failed"
     append_summary(
         f"{status} `{version}`: {totals}, {len(found.load_errors)} pack load errors"
@@ -419,8 +473,9 @@ def report(
         annotate("error", f"Server test run ({version})", problem)
         print(f"---- last {LOG_TAIL_LINES} server log lines ----")
         print("\n".join(lines[-LOG_TAIL_LINES:]))
+    outcome = totals if load_only else f"{totals}; result={found.result}"
     print(
-        f"Minecraft {version}: {totals}; result={found.result}; "
+        f"Minecraft {version}: {outcome}; "
         f"{len(found.fails)} failures; {len(found.load_errors)} pack load errors"
     )
     return ok
@@ -447,10 +502,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--server-url", required=True)
     parser.add_argument("--sha1", required=True)
-    parser.add_argument("--cache-dir", default=".mc-cache")
-    parser.add_argument("--repo", default=".")
+    parser.add_argument(
+        "--cache-dir", help="server JAR cache directory (defaults to a sibling)"
+    )
+    parser.add_argument("--repo", default=".", help="consuming repository root")
+    parser.add_argument(
+        "--pack-path",
+        help=(
+            "data pack directory relative to --repo; overrides armour.json "
+            "and auto-discovery"
+        ),
+    )
     parser.add_argument("--tests-dir", default="tests")
-    parser.add_argument("--work-dir", default="server-run")
+    parser.add_argument(
+        "--load-only",
+        action="store_true",
+        help=(
+            "the pack has no function tests: only check that the server starts "
+            "and loads it without errors (--tests-dir is ignored)"
+        ),
+    )
+    parser.add_argument(
+        "--work-dir",
+        help="server work directory (defaults to a sibling of --repo)",
+    )
     parser.add_argument("--java", default="java")
     parser.add_argument("--startup-timeout", type=float, default=300)
     parser.add_argument("--test-timeout", type=float, default=180)
@@ -460,43 +535,165 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def validate_tests_inputs(tests_dir: Path, tests_namespace: str) -> None:
+    """Check the tests pack and the harness pack before staging them."""
+    tests_function_dir = tests_dir / "data" / tests_namespace / "function"
+    if not tests_function_dir.is_dir():
+        raise ArmourError(
+            f"Tests directory has no {tests_function_dir.relative_to(tests_dir)} folder"
+        )
+    if not (HARNESS_PACK_DIR / "pack.mcmeta").is_file():
+        raise ArmourError(
+            f"ARMOUR's harness pack is missing from {HARNESS_PACK_DIR}. "
+            "If ARMOUR is a submodule, run git submodule update --init."
+        )
+    if not (tests_dir / "pack.mcmeta").is_file():
+        raise ArmourError(
+            f"Tests pack metadata is missing: {tests_dir / 'pack.mcmeta'}"
+        )
+    if not isinstance(load_mcmeta(HARNESS_PACK_DIR).get("pack"), dict):
+        raise ArmourError(
+            f"Harness pack metadata has no pack section: {HARNESS_PACK_DIR}"
+        )
+    if not isinstance(load_mcmeta(tests_dir).get("pack"), dict):
+        raise ArmourError(f"Tests pack metadata has no pack section: {tests_dir}")
+
+
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     """Command-line entry point."""
     args = parse_args(argv)
 
     repo = Path(args.repo).resolve()
     config = armour_config.load(repo)
-    work = Path(args.work_dir).resolve()
-    if work.exists():
-        shutil.rmtree(work)
-    datapacks = work / "world" / "datapacks"
-    datapacks.mkdir(parents=True)
-
-    jar = (
-        Path(args.server_jar)
-        if args.server_jar
-        else download_server_jar(
-            args.server_url, args.sha1, Path(args.cache_dir).resolve()
+    pack_path = args.pack_path if args.pack_path is not None else config.pack_path
+    pack_root = resolve_pack_root(repo, pack_path)
+    work_dir = (
+        Path(args.work_dir)
+        if args.work_dir is not None
+        else Path("..") / f".{repo.name}-server-run"
+    )
+    work_candidate = work_dir if work_dir.is_absolute() else repo / work_dir
+    work_candidate = work_candidate.absolute()
+    reject_symlink_components(work_candidate, Path(work_candidate.anchor))
+    work = work_candidate.resolve()
+    tests_dir = Path(args.tests_dir)
+    if not tests_dir.is_absolute():
+        tests_dir = repo / tests_dir
+    tests_dir = tests_dir.absolute()
+    reject_symlink_components(tests_dir, Path(tests_dir.anchor))
+    tests_dir = tests_dir.resolve()
+    server_jar = Path(args.server_jar) if args.server_jar else None
+    if server_jar is not None and not server_jar.is_absolute():
+        server_jar = repo / server_jar
+    if server_jar is not None:
+        server_jar = server_jar.resolve()
+    cache_dir = (
+        Path(args.cache_dir)
+        if args.cache_dir is not None
+        else repo.parent / f".{repo.name}-mc-cache"
+    )
+    if not cache_dir.is_absolute():
+        cache_dir = repo / cache_dir
+    if server_jar is None:
+        cache_dir = cache_dir.absolute()
+        reject_symlink_components(cache_dir, Path(cache_dir.anchor))
+        cache_dir = cache_dir.resolve()
+        cache_sources = (
+            repo,
+            tests_dir,
+            HARNESS_PACK_DIR.resolve(),
+            *((server_jar,) if server_jar is not None else ()),
         )
+        if any(paths_overlap(cache_dir, source) for source in cache_sources):
+            raise ArmourError(
+                "Cache directory must not overlap the repository or any source "
+                f"input: {cache_dir}"
+            )
+    else:
+        cache_dir = cache_dir.resolve()
+    protected = (
+        repo,
+        pack_root,
+        tests_dir,
+        HARNESS_PACK_DIR.resolve(),
+        cache_dir,
+        *((server_jar,) if server_jar is not None else ()),
     )
-    stage_data_pack(repo, datapacks / config.pack_name, widen=args.kind == "snapshot")
-    test_count = stage_tests_pack(
-        Path(args.tests_dir).resolve(),
-        datapacks / config.tests_namespace,
-        config.tests_namespace,
+    for source in protected:
+        if paths_overlap(work, source):
+            raise ArmourError(
+                "Server work directory "
+                f"{work} must not overlap source directory {source}"
+            )
+    if work.exists() and not work.is_dir():
+        msg = f"Server work directory exists and is not a directory: {work}"
+        raise ArmourError(msg)
+    if not args.load_only and not tests_dir.is_dir():
+        raise ArmourError(f"Tests directory does not exist: {tests_dir}")
+    _reject_symlinks(pack_root)
+    if not args.load_only:
+        _reject_symlinks(tests_dir)
+    if not (pack_root / "data").is_dir():
+        raise ArmourError(f"Data directory does not exist: {pack_root / 'data'}")
+    entries = overlay_entries(load_mcmeta(pack_root))
+    for entry in entries:
+        overlay_range(entry)
+    validate_overlay_sources(pack_root, entries)
+    if not args.load_only:
+        validate_tests_inputs(tests_dir, config.tests_namespace)
+    if server_jar is not None and not server_jar.is_file():
+        raise ArmourError(f"Server jar does not exist: {server_jar}")
+    jar = (
+        server_jar
+        if server_jar is not None
+        else download_server_jar(args.server_url, args.sha1, cache_dir)
     )
-    write_server_files(work, config.pack_name, config.tests_namespace)
-    print(f"Staged the data pack and {test_count} tests for Minecraft {args.version}")
+    # Serialize access to a shared work directory. Port 0 delegates
+    # allocation to the OS, so separate work directories cannot collide.
+    with main_transaction_lock(work):
+        if work.exists():
+            shutil.rmtree(work)
+        datapacks = work / "world" / "datapacks"
+        datapacks.mkdir(parents=True)
+        stage_data_pack(
+            pack_root, datapacks / config.pack_name, widen=args.kind == "snapshot"
+        )
+        pack_names: tuple[str, ...] = (config.pack_name,)
+        start_command = None
+        if args.load_only:
+            print(f"Staged the data pack for Minecraft {args.version} (load only)")
+        else:
+            stage_harness_pack(datapacks / armour_config.HARNESS_NAMESPACE)
+            test_count = stage_tests_pack(
+                tests_dir,
+                datapacks / config.tests_namespace,
+                config.tests_namespace,
+            )
+            pack_names = (
+                armour_config.HARNESS_NAMESPACE,
+                config.pack_name,
+                config.tests_namespace,
+            )
+            start_command = armour_config.START_COMMAND
+            print(
+                f"Staged the data pack and {test_count} tests for "
+                f"Minecraft {args.version}"
+            )
+        write_server_files(work, pack_names)
 
-    lines, problem = run_tests_on_server(
-        [args.java, JAVA_HEAP, "-jar", str(jar), "nogui"],
-        work,
-        config.start_command,
-        startup_timeout=args.startup_timeout,
-        test_timeout=args.test_timeout,
-    )
-    found = analyse(lines, (config.pack_name, config.tests_namespace))
-    return 0 if report(args.version, found, problem, lines) else 1
+        java = args.java
+        if ("/" in java or "\\" in java) and not Path(java).is_absolute():
+            java = str((repo / java).resolve())
+        lines, problem = run_tests_on_server(
+            [java, JAVA_HEAP, "-jar", str(Path(jar).resolve()), "nogui"],
+            work,
+            start_command,
+            startup_timeout=args.startup_timeout,
+            test_timeout=args.test_timeout,
+        )
+        found = analyse(lines, pack_names)
+        ok = report(args.version, found, problem, lines, load_only=args.load_only)
+        return 0 if ok else 1
 
 
 if __name__ == "__main__":
