@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 NON_TEST_FOLDERS = frozenset({"harness", "assert"})
+_FUNCTION_PATH_RE = re.compile(r"[a-z0-9._/-]+")
 # Where the test functions run: the arena test position (see armour:harness/run).
 TEST_POSITION = "8 150 8"
 
@@ -45,7 +47,9 @@ def find_tests(pack_dir: Path, namespace: str) -> list[str]:
         if relative.parts[0] in NON_TEST_FOLDERS:
             continue
         function_path = relative.with_suffix("")
-        if not function_path.as_posix().islower():
+        if not _FUNCTION_PATH_RE.fullmatch(function_path.as_posix()) or any(
+            part in {"", ".", ".."} for part in function_path.parts
+        ):
             raise ArmourError(f"Invalid Minecraft function path: {relative}")
         tests.append(function_path.as_posix())
     return tests
