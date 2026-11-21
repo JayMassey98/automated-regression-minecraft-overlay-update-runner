@@ -92,8 +92,6 @@ try {
         foreach ($package in $ToolPackages) {
             Invoke-InstallOrUpgrade $package
         }
-        Write-Host ""
-        Write-Host "Note: newly installed tools may not be visible to this PowerShell process if PATH changed. If a command is not found, reopen PowerShell and rerun without -Install." -ForegroundColor Yellow
     }
 
     Invoke-LintStep "GitHub Actions workflow lint" "actionlint" @(".github/workflows/self-test.yml")
