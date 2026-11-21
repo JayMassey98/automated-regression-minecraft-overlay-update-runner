@@ -534,9 +534,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             source_map_path.unlink(missing_ok=True)
         raise
     else:
-        if out_saved:
+        if out_backup.exists():
             shutil.rmtree(out_backup)
-        if map_saved and map_backup is not None:
+        if map_backup is not None and map_backup.exists():
             map_backup.unlink(missing_ok=True)
     finally:
         if staged_out.exists():
