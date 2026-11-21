@@ -578,7 +578,9 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             {
                 "out_existed": out_existed_before_commit,
                 "map_existed": map_existed_before_commit,
-                "map_path": str(source_map_path) if source_map_path is not None else None,
+                "map_path": (
+                    str(source_map_path) if source_map_path is not None else None
+                ),
             }
         ),
         encoding="utf-8",
