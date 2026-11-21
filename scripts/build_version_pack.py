@@ -397,7 +397,6 @@ def write_source_map(
     temporary.replace(source_map)
 
 
-
 def recover_main_transaction(  # noqa: C901, PLR0912
     out: Path, source_map_path: Path | None
 ) -> None:
@@ -448,7 +447,6 @@ def recover_main_transaction(  # noqa: C901, PLR0912
     if staged_map is not None:
         staged_map.unlink(missing_ok=True)
     journal.unlink()
-
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
