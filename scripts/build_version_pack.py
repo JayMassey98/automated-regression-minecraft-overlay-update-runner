@@ -498,10 +498,19 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
                     "Transaction staging path already exists; refusing cleanup: "
                     f"{candidate}"
                 )
-    result = build_flattened_pack(pack_root, staged_out, fmt, source_root=repo)
-    if staged_map is not None:
-        staged_map.parent.mkdir(parents=True, exist_ok=True)
-        staged_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+    try:
+        result = build_flattened_pack(pack_root, staged_out, fmt, source_root=repo)
+        if staged_map is not None:
+            staged_map.parent.mkdir(parents=True, exist_ok=True)
+            staged_map.write_text(
+                json.dumps(result.source_map, indent=1), encoding="utf-8"
+            )
+    except BaseException:
+        if staged_out.exists():
+            shutil.rmtree(staged_out, ignore_errors=True)
+        if staged_map is not None:
+            staged_map.unlink(missing_ok=True)
+        raise
 
     out_existed_before_commit = out.exists()
     map_existed_before_commit = (
