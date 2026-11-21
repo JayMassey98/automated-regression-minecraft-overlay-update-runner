@@ -360,6 +360,34 @@ class MainTests(TempDirTestCase):
         self.assertFalse(map_backup.exists())
         self.assertFalse(journal.exists())
 
+    def test_recovery_keeps_new_outputs_after_committed_cleanup_interruption(self) -> None:
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        out_backup = out.with_name(".out.armour-main-backup")
+        map_backup = source_map.with_name(".source-map.json.armour-main-backup")
+        write(out_backup / "previous.txt", "old pack")
+        write(map_backup, '{"old": true}')
+        write(out / "new.txt", "new pack")
+        write(source_map, '{"new": true}')
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "out_existed": True,
+                    "map_existed": True,
+                    "committed": True,
+                    "map_path": str(source_map),
+                }
+            ),
+        )
+        build_version_pack.recover_main_transaction(out, source_map)
+        self.assertEqual((out / "new.txt").read_text(), "new pack")
+        self.assertEqual(source_map.read_text(), '{"new": true}')
+        self.assertFalse(out_backup.exists())
+        self.assertFalse(map_backup.exists())
+        self.assertFalse(journal.exists())
+
     def test_pack_version_writes_pack_source_map_and_summary(self) -> None:
         repo = make_repo(self.tmp / "repo")
         summary = self.tmp / "summary.md"
