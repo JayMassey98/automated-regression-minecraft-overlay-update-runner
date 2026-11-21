@@ -336,6 +336,35 @@ class MainTests(TempDirTestCase):
         )
         self.assertIn("94.1", summary.read_text(encoding="utf-8"))
 
+    def test_source_map_commit_failure_rolls_back_both_outputs(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        write(out / "old.txt", "previous pack")
+        write(source_map, '{"previous": "map"}')
+        original_rename = build_version_pack.Path.rename
+
+        def fail_map_commit(path, target):
+            if path.name.endswith(".armour-main-stage"):
+                raise OSError("simulated map commit failure")
+            return original_rename(path, target)
+
+        with mock.patch.object(build_version_pack.Path, "rename", fail_map_commit):
+            with self.assertRaisesRegex(OSError, "simulated map commit failure"):
+                self.run_main(
+                    "--repo",
+                    str(repo),
+                    "--pack-version",
+                    "90",
+                    "--out",
+                    str(out),
+                    "--source-map",
+                    str(source_map),
+                )
+        self.assertEqual((out / "old.txt").read_text(), "previous pack")
+        self.assertEqual(source_map.read_text(), '{"previous": "map"}')
+        self.assertFalse((out / "pack.mcmeta").exists())
+
     def test_source_map_cannot_overwrite_pack_metadata(self) -> None:
         repo = self.tmp / "repo"
         pack = make_repo(repo / "packs" / "pack")
