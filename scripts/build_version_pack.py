@@ -328,15 +328,14 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     except BaseException:
         if temp.exists():
             shutil.rmtree(temp, ignore_errors=True)
-        # Roll back even when the newly built output has already been installed.
-        # This protects Ctrl-C and failures during backup cleanup.
-        if backup_created and backup.exists():
+        # Restore whenever a backup exists, including interruption between rename
+        # and setting the bookkeeping flag.
+        if backup.exists():
             if out.exists():
                 shutil.rmtree(out, ignore_errors=True)
             backup.rename(out)
         elif not backup_created and out.exists():
-            # A first build interrupted after the rename has no previous output
-            # to restore, so remove the incomplete/new output.
+            # A first build interrupted after install has no previous output.
             shutil.rmtree(out, ignore_errors=True)
         raise
     else:
