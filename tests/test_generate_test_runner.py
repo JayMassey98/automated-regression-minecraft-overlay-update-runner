@@ -69,7 +69,6 @@ class GenerateTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "Invalid Minecraft function path"):
             generate_test_runner.find_tests(self.tmp, "x")
 
-
     def test_render_counts_tests(self) -> None:
         text = generate_test_runner.render(["a", "b/c"], "ns")
         self.assertIn("Runs each of the 2 test functions", text)
