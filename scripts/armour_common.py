@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import email.message
 import hashlib
 import json
 import os
