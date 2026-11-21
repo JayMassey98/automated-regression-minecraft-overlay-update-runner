@@ -398,7 +398,9 @@ def write_source_map(
 
 
 
-def recover_main_transaction(out: Path, source_map_path: Path | None) -> None:
+def recover_main_transaction(  # noqa: C901, PLR0912
+    out: Path, source_map_path: Path | None
+) -> None:
     """Recover an interrupted output/source-map commit using its journal."""
     journal = out.with_name(f".{out.name}.armour-main-transaction.json")
     if not journal.exists():
@@ -414,8 +416,16 @@ def recover_main_transaction(out: Path, source_map_path: Path | None) -> None:
         raise ArmourError(f"Invalid transaction journal: {journal}")
     out_backup = out.with_name(f".{out.name}.armour-main-backup")
     staged_out = out.with_name(f".{out.name}.armour-main-stage")
-    map_backup = source_map_path.with_name(f".{source_map_path.name}.armour-main-backup") if source_map_path else None
-    staged_map = source_map_path.with_name(f".{source_map_path.name}.armour-main-stage") if source_map_path else None
+    map_backup = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-backup")
+        if source_map_path
+        else None
+    )
+    staged_map = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-stage")
+        if source_map_path
+        else None
+    )
     for path in (out, out_backup, staged_out, source_map_path, map_backup, staged_map):
         if path is not None:
             reject_symlink_components(path, Path(path.anchor))
@@ -436,6 +446,8 @@ def recover_main_transaction(out: Path, source_map_path: Path | None) -> None:
     if staged_map is not None:
         staged_map.unlink(missing_ok=True)
     journal.unlink()
+
+
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the command line."""
