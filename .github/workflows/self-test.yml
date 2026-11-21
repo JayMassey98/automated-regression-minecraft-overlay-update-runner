@@ -44,7 +44,11 @@ jobs:
           args: format --check
 
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
       - run: python3 -m unittest discover -s tests -v
