@@ -397,6 +397,46 @@ def write_source_map(
     temporary.replace(source_map)
 
 
+
+def recover_main_transaction(out: Path, source_map_path: Path | None) -> None:
+    """Recover an interrupted output/source-map commit using its journal."""
+    journal = out.with_name(f".{out.name}.armour-main-transaction.json")
+    if not journal.exists():
+        return
+    reject_symlink_components(journal, Path(journal.anchor))
+    try:
+        state = json.loads(journal.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ArmourError(f"Cannot read transaction journal {journal}: {error}") from error
+    if not isinstance(state, dict) or not all(
+        isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
+    ):
+        raise ArmourError(f"Invalid transaction journal: {journal}")
+    out_backup = out.with_name(f".{out.name}.armour-main-backup")
+    staged_out = out.with_name(f".{out.name}.armour-main-stage")
+    map_backup = source_map_path.with_name(f".{source_map_path.name}.armour-main-backup") if source_map_path else None
+    staged_map = source_map_path.with_name(f".{source_map_path.name}.armour-main-stage") if source_map_path else None
+    for path in (out, out_backup, staged_out, source_map_path, map_backup, staged_map):
+        if path is not None:
+            reject_symlink_components(path, Path(path.anchor))
+    if out_backup.exists():
+        if out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        out_backup.rename(out)
+    elif not state["out_existed"] and out.exists():
+        shutil.rmtree(out, ignore_errors=True)
+    if map_backup is not None and map_backup.exists():
+        if source_map_path.exists():
+            source_map_path.unlink(missing_ok=True)
+        map_backup.rename(source_map_path)
+    elif source_map_path is not None and not state["map_existed"]:
+        source_map_path.unlink(missing_ok=True)
+    if staged_out.exists():
+        shutil.rmtree(staged_out, ignore_errors=True)
+    if staged_map is not None:
+        staged_map.unlink(missing_ok=True)
+    journal.unlink()
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the command line."""
     parser = argparse.ArgumentParser(
@@ -490,6 +530,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
         if source_map_path is not None
         else None
     )
+    recover_main_transaction(out, source_map_path)
     for candidate in (staged_out, out_backup, staged_map, map_backup):
         if candidate is not None:
             reject_symlink_components(candidate, Path(candidate.anchor))
@@ -516,6 +557,13 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
     map_existed_before_commit = (
         source_map_path.exists() if source_map_path is not None else False
     )
+    journal = out.with_name(f".{out.name}.armour-main-transaction.json")
+    journal_tmp = journal.with_name(f".{journal.name}.tmp")
+    journal_tmp.write_text(json.dumps({
+        "out_existed": out_existed_before_commit,
+        "map_existed": map_existed_before_commit,
+    }), encoding="utf-8")
+    journal_tmp.replace(journal)
     try:
         if out_existed_before_commit:
             out.rename(out_backup)
@@ -545,6 +593,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             shutil.rmtree(out_backup)
         if map_backup is not None and map_backup.exists():
             map_backup.unlink(missing_ok=True)
+        journal.unlink(missing_ok=True)
     finally:
         if staged_out.exists():
             shutil.rmtree(staged_out, ignore_errors=True)
