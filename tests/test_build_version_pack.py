@@ -251,6 +251,23 @@ class BuildTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "Symbolic links"):
             build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
 
+    def test_backup_rename_failure_preserves_previous_output(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        write(out / "keep.txt", "previous")
+        original_rename = build_version_pack.Path.rename
+
+        def fail_backup_rename(path, target):
+            if target.name.endswith("armour-backup"):
+                raise OSError("simulated backup rename failure")
+            return original_rename(path, target)
+
+        with mock.patch.object(build_version_pack.Path, "rename", fail_backup_rename):
+            with self.assertRaisesRegex(OSError, "simulated backup rename failure"):
+                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((out / "keep.txt").read_text(), "previous")
+        self.assertFalse((out / "pack.mcmeta").exists())
+
     def test_invalid_overlay_does_not_destroy_previous_output(self) -> None:
         repo = make_repo(self.tmp / "repo")
         out = self.tmp / "out"
