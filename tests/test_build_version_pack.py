@@ -9,7 +9,7 @@ import subprocess
 import sys
 import zipfile
 from contextlib import redirect_stdout
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TextIO
 from unittest import TestCase, mock
 
 from support import SCRIPTS, TempDirTestCase, write
@@ -77,7 +77,7 @@ class FormatTests(TestCase):
             (88, build_version_pack.MINOR_INFINITY),
         )
         self.assertEqual(build_version_pack.as_format([94, 1], upper=True), (94, 1))
-        values: list[object] = ["88", True, [1], [1, 2, 3]]
+        values: list[object] = ["88", True, 1.5, [1], [1, 2, 3]]
         for value in values:
             with self.subTest(value), self.assertRaises(ArmourError):
                 build_version_pack.as_format(value, upper=False)
@@ -99,9 +99,28 @@ class FormatTests(TestCase):
             with self.subTest(entry):
                 self.assertEqual(build_version_pack.overlay_range(entry), expected)
 
+    def test_overlay_range_rejects_null_and_mixed_range_syntax(self) -> None:
+        invalid = [
+            {"formats": None},
+            {"formats": [80, 90], "min_format": 80},
+            {"formats": 80, "max_format": 90},
+            {"min_format": 90, "max_format": 80, "formats": [70, 100]},
+        ]
+        for entry in invalid:
+            with self.subTest(entry=entry), self.assertRaises(ArmourError):
+                build_version_pack.overlay_range(entry)
+
     def test_overlay_range_rejects_unknown_formats_value(self) -> None:
         with self.assertRaises(ArmourError):
             build_version_pack.overlay_range({"formats": "81"})
+        with self.assertRaisesRegex(ArmourError, "minimum format exceeds maximum"):
+            build_version_pack.overlay_range({"min_format": 90, "max_format": 80})
+        for legacy in ([90, 80], {"min_inclusive": 90, "max_inclusive": 80}):
+            with (
+                self.subTest(legacy=legacy),
+                self.assertRaisesRegex(ArmourError, "minimum format exceeds maximum"),
+            ):
+                build_version_pack.overlay_range({"formats": legacy})
 
 
 class ReadVersionJsonTests(TempDirTestCase):
@@ -131,6 +150,12 @@ class OverlayEntriesTests(TestCase):
 
     def test_no_overlays(self) -> None:
         self.assertEqual(build_version_pack.overlay_entries({"pack": {}}), [])
+
+    def test_rejects_malformed_overlay_shapes(self) -> None:
+        invalid = (None, [], {"entries": None}, {"entries": [None]}, {"entries": ["x"]})
+        for overlays in invalid:
+            with self.subTest(overlays), self.assertRaises(ArmourError):
+                build_version_pack.overlay_entries({"overlays": overlays})
 
     def test_rejects_bad_directories(self) -> None:
         for directory in (None, "", "../escape", "/abs", "a/../../b"):
@@ -208,6 +233,97 @@ class BuildTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "does not exist"):
             self.build(repo, (90, 0))
 
+    def test_root_pack_can_build_inside_dedicated_build_directory(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = repo / "build/flattened"
+        result = build_version_pack.build_flattened_pack(
+            repo, out, (90, 0), source_root=repo
+        )
+        self.assertTrue((out / "pack.mcmeta").is_file())
+        self.assertIn("data/p/function/root.mcfunction", result.source_map)
+
+    def test_output_must_not_overlap_source_pack(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        for out in (repo, repo / "generated", repo.parent):
+            with self.subTest(out), self.assertRaisesRegex(ArmourError, "overlap"):
+                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertTrue((repo / "data/p/function/root.mcfunction").is_file())
+
+    def test_data_symlinks_are_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        outside = self.tmp / "outside.mcfunction"
+        write(outside, "outside")
+        try:
+            (repo / "data/p/function/outside.mcfunction").symlink_to(outside)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
+
+    def test_backup_rename_failure_preserves_previous_output(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        write(out / "keep.txt", "previous")
+        original_rename = build_version_pack.Path.rename
+
+        def fail_backup_rename(path: Path, target: Path) -> Path:
+            if target.name.endswith("armour-backup"):
+                raise OSError("simulated backup rename failure")
+            return original_rename(path, target)
+
+        with (
+            mock.patch.object(build_version_pack.Path, "rename", fail_backup_rename),
+            self.assertRaisesRegex(OSError, "simulated backup rename failure"),
+        ):
+            build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((out / "keep.txt").read_text(), "previous")
+        self.assertFalse((out / "pack.mcmeta").exists())
+
+    def test_invalid_overlay_does_not_destroy_previous_output(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        write(out / "previous-success.txt", "keep")
+        metadata = json.loads((repo / "pack.mcmeta").read_text())
+        metadata["overlays"]["entries"].append(
+            {"directory": "missing", "formats": [99, 90]}
+        )
+        write(repo / "pack.mcmeta", json.dumps(metadata))
+        with self.assertRaises(ArmourError):
+            build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((out / "previous-success.txt").read_text(), "keep")
+
+    def test_protected_repository_output_is_rejected(self) -> None:
+        root = self.tmp / "repo"
+        repo = make_repo(root / "packs" / "source")
+        for name in ("tests", ".git", ".github", "build", "docs"):
+            target = root / name
+            write(target / "keep.txt", "keep")
+            with (
+                self.subTest(name),
+                self.assertRaisesRegex(ArmourError, "dedicated subdirectory"),
+            ):
+                build_version_pack.build_flattened_pack(
+                    repo, target, (90, 0), source_root=root
+                )
+            self.assertEqual((target / "keep.txt").read_text(), "keep")
+
+    def test_symlinked_output_and_parent_are_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        external = self.tmp / "external"
+        write(external / "keep.txt", "safe")
+        try:
+            (self.tmp / "out-link").symlink_to(external, target_is_directory=True)
+            (self.tmp / "parent-link").symlink_to(self.tmp, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        for out in (self.tmp / "out-link", self.tmp / "parent-link" / "other"):
+            with (
+                self.subTest(out),
+                self.assertRaisesRegex(ArmourError, "Symbolic links"),
+            ):
+                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        self.assertEqual((external / "keep.txt").read_text(), "safe")
+
     def test_missing_pack_mcmeta_is_an_error(self) -> None:
         with self.assertRaisesRegex(ArmourError, "pack.mcmeta"):
             self.build(self.tmp, (90, 0))
@@ -224,6 +340,313 @@ class MainTests(TempDirTestCase):
         with redirect_stdout(out):
             code = build_version_pack.main(list(args))
         return code, out.getvalue()
+
+    def test_journal_temporary_symlink_cannot_overwrite_external_target(self) -> None:
+        journal = self.tmp / ".out.armour-main-transaction.json"
+        temporary = journal.with_name(f".{journal.name}.tmp")
+        target = self.tmp / "external.txt"
+        target.write_text("keep", encoding="utf-8")
+        try:
+            temporary.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "temporary path already exists"):
+            build_version_pack.write_transaction_journal(
+                journal,
+                {
+                    "schema_version": 1,
+                    "out_existed": False,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": None,
+                },
+            )
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+
+    def test_source_map_temp_symlink_cannot_overwrite_external_target(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "build/flattened"
+        source_map = self.tmp / "build/source-map.json"
+        temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+        target = self.tmp / "external.txt"
+        target.write_text("keep", encoding="utf-8")
+        try:
+            temporary.symlink_to(target)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        result = build_version_pack.build_flattened_pack(
+            repo, out, (90, 0), source_root=repo
+        )
+        with self.assertRaises(FileExistsError):
+            build_version_pack.write_source_map(source_map, result, repo, repo, out)
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+        self.assertTrue(temporary.is_symlink())
+
+    def test_source_map_temp_symlink_race_cannot_overwrite_external_target(
+        self,
+    ) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "build/flattened"
+        source_map = self.tmp / "build/source-map.json"
+        temporary = source_map.with_name(f".{source_map.name}.armour-tmp")
+        target = self.tmp / "external.txt"
+        target.write_text("keep", encoding="utf-8")
+        result = build_version_pack.build_flattened_pack(
+            repo, out, (90, 0), source_root=repo
+        )
+        original_open = build_version_pack.os.open
+        injected = False
+
+        def competing_open(path: object, flags: int, mode: int = 0o777) -> int:
+            nonlocal injected
+            self.assertTrue(flags & os.O_EXCL)
+            temporary.symlink_to(target)
+            injected = True
+            return original_open(path, flags, mode)
+
+        with (
+            mock.patch.object(build_version_pack.os, "open", competing_open),
+            self.assertRaises(OSError),
+        ):
+            build_version_pack.write_source_map(source_map, result, repo, repo, out)
+        self.assertTrue(injected)
+        self.assertEqual(target.read_text(encoding="utf-8"), "keep")
+        self.assertTrue(temporary.is_symlink())
+
+    def test_recovery_rejects_unknown_journal_schema(self) -> None:
+        out = self.tmp / "out"
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 99,
+                    "out_existed": False,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": None,
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ArmourError, "Invalid or mismatched"):
+            build_version_pack.recover_main_transaction(out, None)
+
+    def test_recovery_rejects_ambiguous_missing_backup_state(self) -> None:
+        out = self.tmp / "out"
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": True,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": None,
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ArmourError, "Ambiguous"):
+            build_version_pack.recover_main_transaction(out, None)
+        self.assertTrue(journal.is_file())
+        self.assertFalse(out.exists())
+
+    def test_recovery_restores_previous_outputs_after_interrupted_commit(self) -> None:
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        out_backup = out.with_name(".out.armour-main-backup")
+        map_backup = source_map.with_name(".source-map.json.armour-main-backup")
+        write(out_backup / "previous.txt", "previous pack")
+        write(map_backup, '{"previous": true}')
+        write(out / "new.txt", "partially committed pack")
+        write(source_map, '{"new": true}')
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": True,
+                    "map_existed": True,
+                    "committed": False,
+                    "map_path": str(source_map),
+                }
+            ),
+        )
+        build_version_pack.recover_main_transaction(out, source_map)
+        self.assertEqual((out / "previous.txt").read_text(), "previous pack")
+        self.assertEqual(source_map.read_text(), '{"previous": true}')
+        self.assertFalse(out_backup.exists())
+        self.assertFalse(map_backup.exists())
+        self.assertFalse(journal.exists())
+
+    def test_recovery_preserves_committed_outputs(self) -> None:
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        out_backup = out.with_name(".out.armour-main-backup")
+        map_backup = source_map.with_name(".source-map.json.armour-main-backup")
+        write(out_backup / "previous.txt", "old pack")
+        write(map_backup, '{"old": true}')
+        write(out / "new.txt", "new pack")
+        write(source_map, '{"new": true}')
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": True,
+                    "map_existed": True,
+                    "committed": True,
+                    "map_path": str(source_map),
+                }
+            ),
+        )
+        build_version_pack.recover_main_transaction(out, source_map)
+        self.assertEqual((out / "new.txt").read_text(), "new pack")
+        self.assertEqual(source_map.read_text(), '{"new": true}')
+        self.assertFalse(out_backup.exists())
+        self.assertFalse(map_backup.exists())
+        self.assertFalse(journal.exists())
+
+    def test_journal_temp_race_does_not_remove_another_process_file(self) -> None:
+        journal = self.tmp / ".out.armour-main-transaction.json"
+        temporary = journal.with_name(f".{journal.name}.tmp")
+        original_open = build_version_pack.Path.open
+
+        def competing_open(
+            path: Path, mode: str = "r", *, encoding: str | None = None
+        ) -> TextIO:
+            if path == temporary:
+                with original_open(path, "x", encoding="utf-8") as stream:
+                    stream.write("owned elsewhere")
+            return original_open(path, mode, encoding=encoding)
+
+        with (
+            mock.patch.object(build_version_pack.Path, "open", competing_open),
+            self.assertRaises(FileExistsError),
+        ):
+            build_version_pack.write_transaction_journal(journal, {"test": True})
+        self.assertEqual(temporary.read_text(encoding="utf-8"), "owned elsewhere")
+
+    def test_recovery_rejects_missing_backup_and_missing_stage(self) -> None:
+        out = self.tmp / "out"
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(out / "possibly-new.txt", "uncertain")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": True,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": None,
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ArmourError, "Ambiguous"):
+            build_version_pack.recover_main_transaction(out, None)
+        self.assertTrue((out / "possibly-new.txt").is_file())
+        self.assertTrue(journal.is_file())
+
+    def test_recovery_rejects_unexpected_map_without_previous_map(self) -> None:
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        staged_map = source_map.with_name(".source-map.json.armour-main-stage")
+        write(out / "pack.mcmeta", "{}")
+        write(source_map, '{"unexpected": true}')
+        write(staged_map, '{"staged": true}')
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": False,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": str(source_map),
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ArmourError, "Ambiguous"):
+            build_version_pack.recover_main_transaction(out, source_map)
+        self.assertTrue(source_map.is_file())
+        self.assertTrue(staged_map.is_file())
+        self.assertTrue(journal.is_file())
+
+    def test_recovery_rejects_simultaneous_new_output_and_stage(self) -> None:
+        out = self.tmp / "out"
+        staged_out = out.with_name(".out.armour-main-stage")
+        write(out / "new.txt", "destination")
+        write(staged_out / "staged.txt", "stage")
+        journal = out.with_name(".out.armour-main-transaction.json")
+        write(
+            journal,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "out_existed": False,
+                    "map_existed": False,
+                    "committed": False,
+                    "map_path": None,
+                }
+            ),
+        )
+        with self.assertRaisesRegex(ArmourError, "Ambiguous"):
+            build_version_pack.recover_main_transaction(out, None)
+        self.assertTrue((out / "new.txt").is_file())
+        self.assertTrue((staged_out / "staged.txt").is_file())
+
+    def test_transaction_lock_rejects_concurrent_build_and_releases(self) -> None:
+        out = self.tmp / "out"
+        with (
+            build_version_pack.main_transaction_lock(out),
+            self.assertRaisesRegex(ArmourError, "Another build"),
+            build_version_pack.main_transaction_lock(out),
+        ):
+            self.fail("second lock unexpectedly acquired")
+        with build_version_pack.main_transaction_lock(out):
+            pass
+        self.assertTrue(out.with_name(".out.armour-main-lock").is_file())
+
+    def test_transaction_lock_serializes_shared_source_map(self) -> None:
+        out_a = self.tmp / "out-a"
+        out_b = self.tmp / "out-b"
+        source_map = self.tmp / "maps/source-map.json"
+        with (
+            build_version_pack.main_transaction_lock(out_a, source_map),
+            self.assertRaisesRegex(ArmourError, "Another build"),
+            build_version_pack.main_transaction_lock(out_b, source_map),
+        ):
+            self.fail("shared source-map lock unexpectedly acquired")
+
+    def test_transaction_metadata_paths_cannot_be_used_as_source_map(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        reserved_paths = (
+            self.tmp / ".out.armour-main-transaction.json",
+            self.tmp / ".out.armour-main-lock",
+            self.tmp / ".out.armour-main-stage",
+        )
+        for source_map in reserved_paths:
+            with (
+                self.subTest(source_map=source_map.name),
+                self.assertRaisesRegex(ArmourError, "Transaction paths overlap"),
+            ):
+                self.run_main(
+                    "--repo",
+                    str(repo),
+                    "--pack-version",
+                    "90",
+                    "--out",
+                    str(out),
+                    "--source-map",
+                    str(source_map),
+                )
+            self.assertFalse(out.exists())
+            self.assertFalse(source_map.exists())
 
     def test_pack_version_writes_pack_source_map_and_summary(self) -> None:
         repo = make_repo(self.tmp / "repo")
@@ -248,6 +671,116 @@ class MainTests(TempDirTestCase):
         )
         self.assertIn("94.1", summary.read_text(encoding="utf-8"))
 
+    def test_source_map_commit_failure_rolls_back_both_outputs(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        out = self.tmp / "out"
+        source_map = self.tmp / "maps/source-map.json"
+        write(out / "old.txt", "previous pack")
+        write(source_map, '{"previous": "map"}')
+        original_rename = build_version_pack.Path.rename
+
+        def fail_map_commit(path: Path, target: Path) -> Path:
+            if path.name.endswith(".armour-main-stage"):
+                raise OSError("simulated map commit failure")
+            return original_rename(path, target)
+
+        with (
+            mock.patch.object(build_version_pack.Path, "rename", fail_map_commit),
+            self.assertRaisesRegex(OSError, "simulated map commit failure"),
+        ):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(out),
+                "--source-map",
+                str(source_map),
+            )
+        self.assertEqual((out / "old.txt").read_text(), "previous pack")
+        self.assertEqual(source_map.read_text(), '{"previous": "map"}')
+        self.assertFalse((out / "pack.mcmeta").exists())
+
+    def test_source_map_cannot_overwrite_pack_metadata(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "pack")
+        config = {"pack_name": "p", "pack_path": "packs/pack"}
+        write(repo / "armour.json", json.dumps(config))
+        before = (pack / "pack.mcmeta").read_text(encoding="utf-8")
+        with self.assertRaisesRegex(ArmourError, "must not overwrite the source pack"):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                "build/flattened",
+                "--source-map",
+                "packs/pack/pack.mcmeta",
+            )
+        self.assertEqual((pack / "pack.mcmeta").read_text(encoding="utf-8"), before)
+
+    def test_source_map_cannot_overwrite_repository_config(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo / "packs" / "pack")
+        config = repo / "armour.json"
+        write(config, '{"pack_name": "p"}')
+        before = config.read_text(encoding="utf-8")
+        with self.assertRaisesRegex(ArmourError, "dedicated output directory"):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                "build/flattened",
+                "--source-map",
+                "armour.json",
+            )
+        self.assertEqual(config.read_text(encoding="utf-8"), before)
+
+    def test_root_pack_builds_under_repository_build_directory(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        code, printed = self.run_main(
+            "--repo",
+            str(repo),
+            "--pack-version",
+            "90",
+            "--out",
+            "build/flattened",
+            "--source-map",
+            "build/source-map.json",
+        )
+        self.assertEqual(code, 0, printed)
+        self.assertTrue((repo / "build/flattened/pack.mcmeta").is_file())
+        self.assertTrue((repo / "build/source-map.json").is_file())
+
+    def test_nested_pack_path_uses_repo_root_for_outputs_and_source_map(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "deep pack")
+        code, printed = self.run_main(
+            "--repo",
+            str(repo),
+            "--pack-path",
+            "packs/deep pack",
+            "--pack-version",
+            '{"data_major": 94, "data_minor": 1}',
+            "--out",
+            "build/flattened",
+            "--source-map",
+            "build/source-map.json",
+        )
+        self.assertEqual(code, 0, printed)
+        self.assertTrue((repo / "build/flattened/pack.mcmeta").is_file())
+        source_map = json.loads((repo / "build/source-map.json").read_text())
+        self.assertEqual(
+            source_map["data/p/function/new.mcfunction"],
+            "packs/deep pack/new/data/p/function/new.mcfunction",
+        )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
     def test_reads_the_format_from_a_downloaded_jar(self) -> None:
         repo = make_repo(self.tmp / "repo")
         jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
@@ -269,6 +802,132 @@ class MainTests(TempDirTestCase):
         self.assertEqual(code, 0)
         download.assert_called_once()
         self.assertIn("Data pack format 90.0", printed)
+
+    def test_cache_symlink_cannot_redirect_into_external_pack(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "source")
+        write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
+        link = repo / "cache-link"
+        try:
+            link.symlink_to(pack, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
+        with (
+            mock.patch.object(
+                build_version_pack, "download_server_jar", return_value=jar
+            ),
+            self.assertRaisesRegex(ArmourError, "Symbolic links"),
+        ):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--server-url",
+                "https://x.test/s.jar",
+                "--sha1",
+                "abc",
+                "--cache-dir",
+                "cache-link",
+                "--out",
+                "build/flattened",
+            )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
+    def test_cache_cannot_overlap_selected_source_pack(self) -> None:
+        repo = self.tmp / "repo"
+        pack = make_repo(repo / "packs" / "source")
+        write(repo / "armour.json", json.dumps({"pack_path": "packs/source"}))
+        jar = make_jar(self.tmp / "s.jar", {"pack_version": 90}, nested=False)
+        for cache_dir in ("packs/source/cache", "packs", ".mc-cache"):
+            with (
+                self.subTest(cache_dir=cache_dir),
+                mock.patch.object(
+                    build_version_pack, "download_server_jar", return_value=jar
+                ),
+                self.assertRaisesRegex(ArmourError, "outside the consuming repository"),
+            ):
+                self.run_main(
+                    "--repo",
+                    str(repo),
+                    "--server-url",
+                    "https://x.test/s.jar",
+                    "--sha1",
+                    "abc",
+                    "--cache-dir",
+                    cache_dir,
+                    "--out",
+                    "build/flattened",
+                )
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+
+    def test_source_map_symlink_is_rejected_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        external = self.tmp / "external.json"
+        external.write_text("keep")
+        try:
+            (repo / "map-link.json").symlink_to(external)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(self.tmp / "out"),
+                "--source-map",
+                "map-link.json",
+            )
+        self.assertEqual(external.read_text(), "keep")
+        self.assertFalse((self.tmp / "out").exists())
+
+    def test_source_map_symlinked_parent_is_rejected_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        external = self.tmp / "external"
+        external.mkdir()
+        try:
+            (repo / "map-dir-link").symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            self.run_main(
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(self.tmp / "out"),
+                "--source-map",
+                "map-dir-link/source-map.json",
+            )
+        self.assertFalse((self.tmp / "out").exists())
+        self.assertFalse((external / "source-map.json").exists())
+
+    def test_invalid_source_map_destinations_fail_before_build(self) -> None:
+        repo = self.tmp / "repo"
+        make_repo(repo)
+        (repo / "map-directory").mkdir()
+        write(repo / "map-parent", "not a directory")
+        for source_map in ("map-directory", "map-parent/source-map.json"):
+            with self.subTest(source_map=source_map):
+                out = self.tmp / f"out-{source_map.split('/')[0]}"
+                with self.assertRaisesRegex(
+                    ArmourError, "Source map|Source-map parent"
+                ):
+                    self.run_main(
+                        "--repo",
+                        str(repo),
+                        "--pack-version",
+                        "90",
+                        "--out",
+                        str(out),
+                        "--source-map",
+                        source_map,
+                    )
+                self.assertFalse(out.exists())
 
     def test_needs_a_jar_or_a_pack_version(self) -> None:
         with self.assertRaisesRegex(ArmourError, "--pack-version"):

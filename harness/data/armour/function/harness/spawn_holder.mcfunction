@@ -1,0 +1,4 @@
+## Summon the invisible armor stand that stands in for the player when running tool functions.
+## Run positioned at the test position.
+
+summon minecraft:armor_stand ~ ~ ~ {Tags:["armour.holder"],NoGravity:1b,Invisible:1b,Marker:1b}
