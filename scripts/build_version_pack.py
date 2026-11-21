@@ -423,7 +423,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
+def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0915
     """Command-line entry point."""
     args = parse_args(argv)
     download_version = args.pack_version is None
