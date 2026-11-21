@@ -413,8 +413,10 @@ def recover_main_transaction(  # noqa: C901, PLR0912
         ) from error
     if not isinstance(state, dict) or not all(
         isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
+    ) or state.get("map_path") != (
+        str(source_map_path) if source_map_path is not None else None
     ):
-        raise ArmourError(f"Invalid transaction journal: {journal}")
+        raise ArmourError(f"Invalid or mismatched transaction journal: {journal")
     out_backup = out.with_name(f".{out.name}.armour-main-backup")
     staged_out = out.with_name(f".{out.name}.armour-main-stage")
     map_backup = (
@@ -576,6 +578,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             {
                 "out_existed": out_existed_before_commit,
                 "map_existed": map_existed_before_commit,
+                "map_path": str(source_map_path) if source_map_path is not None else None,
             }
         ),
         encoding="utf-8",
