@@ -9,6 +9,7 @@ import json
 import os
 import time
 import urllib.error
+import urllib.request
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import TestCase, mock
@@ -113,6 +114,22 @@ class FetchJsonTests(TestCase):
             self.assertEqual(
                 armour_common.fetch_json_object("https://x.test"), {"a": 1}
             )
+
+    def test_redirect_handler_rejects_non_https_destinations(self) -> None:
+        handler = armour_common._HTTPSRedirectHandler()
+        request = urllib.request.Request("https://example.test")
+        with self.assertRaisesRegex(ArmourError, "non-HTTPS"):
+            handler.redirect_request(
+                request, None, 302, "Found", {}, "http://example.test/redirect"
+            )
+
+    def test_redirect_handler_allows_https_destinations(self) -> None:
+        handler = armour_common._HTTPSRedirectHandler()
+        request = urllib.request.Request("https://example.test")
+        redirected = handler.redirect_request(
+            request, None, 302, "Found", {}, "https://example.test/redirect"
+        )
+        self.assertEqual(redirected.full_url, "https://example.test/redirect")
 
     def test_rejects_non_https_urls_without_retrying(self) -> None:
         for url in ("http://x.test/a", "file:///etc/passwd"):
