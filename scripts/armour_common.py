@@ -125,7 +125,7 @@ def _open_url(url: str, timeout: float) -> Any:  # noqa: ANN401 - urllib respons
         raise ArmourError(f"Refusing to download from a non-HTTPS URL: {url}")
     request = urllib.request.Request(
         url, headers={"User-Agent": USER_AGENT}
-    )  # noqa: S310
+    )  # noqa: S310  # noqa: S310
     opener = urllib.request.build_opener(_HTTPSRedirectHandler)
     return opener.open(request, timeout=timeout)
 
