@@ -344,11 +344,13 @@ class MainTests(TempDirTestCase):
         journal = out.with_name(".out.armour-main-transaction.json")
         write(
             journal,
-            json.dumps({
-                "out_existed": True,
-                "map_existed": True,
-                "map_path": str(source_map),
-            }),
+            json.dumps(
+                {
+                    "out_existed": True,
+                    "map_existed": True,
+                    "map_path": str(source_map),
+                }
+            ),
         )
         build_version_pack.recover_main_transaction(out, source_map)
         self.assertEqual((out / "previous.txt").read_text(), "previous pack")
