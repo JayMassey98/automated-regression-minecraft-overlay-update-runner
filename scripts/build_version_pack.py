@@ -416,7 +416,7 @@ def recover_main_transaction(  # noqa: C901, PLR0912
     ) or state.get("map_path") != (
         str(source_map_path) if source_map_path is not None else None
     ):
-        raise ArmourError(f"Invalid or mismatched transaction journal: {journal")
+        raise ArmourError(f"Invalid or mismatched transaction journal: {journal}")
     out_backup = out.with_name(f".{out.name}.armour-main-backup")
     staged_out = out.with_name(f".{out.name}.armour-main-stage")
     map_backup = (
