@@ -348,6 +348,7 @@ class MainTests(TempDirTestCase):
                 {
                     "out_existed": True,
                     "map_existed": True,
+                    "committed": False,
                     "map_path": str(source_map),
                 }
             ),
