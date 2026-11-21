@@ -411,10 +411,13 @@ def recover_main_transaction(  # noqa: C901, PLR0912
         raise ArmourError(
             f"Cannot read transaction journal {journal}: {error}"
         ) from error
-    if not isinstance(state, dict) or not all(
-        isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
-    ) or state.get("map_path") != (
-        str(source_map_path) if source_map_path is not None else None
+    if (
+        not isinstance(state, dict)
+        or not all(
+            isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
+        )
+        or state.get("map_path")
+        != (str(source_map_path) if source_map_path is not None else None)
     ):
         raise ArmourError(f"Invalid or mismatched transaction journal: {journal}")
     out_backup = out.with_name(f".{out.name}.armour-main-backup")
