@@ -373,12 +373,12 @@ class MainTests(TempDirTestCase):
             self.assertRaisesRegex(OSError, "simulated map commit failure"),
         ):
             self.run_main(
-                    "--repo",
-                    str(repo),
-                    "--pack-version",
-                    "90",
-                    "--out",
-                    str(out),
+                "--repo",
+                str(repo),
+                "--pack-version",
+                "90",
+                "--out",
+                str(out),
                 "--source-map",
                 str(source_map),
             )
