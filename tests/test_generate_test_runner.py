@@ -63,6 +63,13 @@ class GenerateTests(TempDirTestCase):
             generate_test_runner.find_tests(self.tmp, "x"), ["assert", "harness"]
         )
 
+    def test_invalid_function_filename_is_rejected(self) -> None:
+        function = self.tmp / "data/x/function"
+        write(function / "Bad Name.mcfunction")
+        with self.assertRaisesRegex(ArmourError, "Invalid Minecraft function path"):
+            generate_test_runner.find_tests(self.tmp, "x")
+
+
     def test_render_counts_tests(self) -> None:
         text = generate_test_runner.render(["a", "b/c"], "ns")
         self.assertIn("Runs each of the 2 test functions", text)
