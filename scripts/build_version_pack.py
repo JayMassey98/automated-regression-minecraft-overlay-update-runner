@@ -495,7 +495,8 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             reject_symlink_components(candidate, Path(candidate.anchor))
             if candidate.exists():
                 raise ArmourError(
-                    f"Transaction staging path already exists; refusing cleanup: {candidate}"
+                    "Transaction staging path already exists; refusing cleanup: "
+                    f"{candidate}"
                 )
     result = build_flattened_pack(
         pack_root, staged_out, fmt, source_root=repo
