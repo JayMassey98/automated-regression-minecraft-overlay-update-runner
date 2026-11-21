@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-import email.message
+from email.message import Message
 import hashlib
 import json
 import os
@@ -111,7 +111,7 @@ class _HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
         fp: object,
         code: int,
         msg: str,
-        headers: email.message.Message,
+        headers: Message,
         newurl: str,
     ) -> urllib.request.Request:
         if urllib.parse.urlsplit(newurl).scheme.lower() != "https":
