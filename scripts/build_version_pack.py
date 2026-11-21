@@ -477,11 +477,69 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912
         jar = download_server_jar(args.server_url, args.sha1, cache_dir)
         pack_version = read_version_json(jar).get("pack_version")
 
-    result = build_flattened_pack(
-        pack_root, out, data_format(pack_version), source_root=repo
+    fmt = data_format(pack_version)
+    staged_out = out.with_name(f".{out.name}.armour-main-stage")
+    out_backup = out.with_name(f".{out.name}.armour-main-backup")
+    staged_map = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-stage")
+        if source_map_path is not None
+        else None
     )
-    if source_map_path is not None:
-        write_source_map(source_map_path, result, repo, pack_root, out)
+    map_backup = (
+        source_map_path.with_name(f".{source_map_path.name}.armour-main-backup")
+        if source_map_path is not None
+        else None
+    )
+    for candidate in (staged_out, out_backup, staged_map, map_backup):
+        if candidate is not None:
+            reject_symlink_components(candidate, Path(candidate.anchor))
+            if candidate.exists():
+                raise ArmourError(
+                    f"Transaction staging path already exists; refusing cleanup: {candidate}"
+                )
+    result = build_flattened_pack(
+        pack_root, staged_out, fmt, source_root=repo
+    )
+    if staged_map is not None:
+        staged_map.parent.mkdir(parents=True, exist_ok=True)
+        staged_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
+
+    out_saved = False
+    map_saved = False
+    out_installed = False
+    map_installed = False
+    try:
+        if out.exists():
+            out.rename(out_backup)
+            out_saved = True
+        if source_map_path is not None and source_map_path.exists():
+            source_map_path.rename(map_backup)
+            map_saved = True
+        staged_out.rename(out)
+        out_installed = True
+        if source_map_path is not None:
+            staged_map.rename(source_map_path)
+            map_installed = True
+    except BaseException:
+        if out_installed and out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        if map_installed and source_map_path is not None and source_map_path.exists():
+            source_map_path.unlink(missing_ok=True)
+        if out_saved and out_backup.exists():
+            out_backup.rename(out)
+        if map_saved and map_backup is not None and map_backup.exists():
+            map_backup.rename(source_map_path)
+        raise
+    else:
+        if out_saved:
+            shutil.rmtree(out_backup)
+        if map_saved and map_backup is not None:
+            map_backup.unlink(missing_ok=True)
+    finally:
+        if staged_out.exists():
+            shutil.rmtree(staged_out, ignore_errors=True)
+        if staged_map is not None:
+            staged_map.unlink(missing_ok=True)
 
     label = f"{result.fmt[0]}.{result.fmt[1]}"
     applied = " + ".join(result.applied)
