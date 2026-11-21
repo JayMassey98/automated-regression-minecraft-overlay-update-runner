@@ -44,7 +44,10 @@ def find_tests(pack_dir: Path, namespace: str) -> list[str]:
         # function/, so only a *folder* named harness/assert excludes a file.
         if relative.parts[0] in NON_TEST_FOLDERS:
             continue
-        tests.append(relative.with_suffix("").as_posix())
+        function_path = relative.with_suffix("")
+        if not function_path.as_posix().islower():
+            raise ArmourError(f"Invalid Minecraft function path: {relative}")
+        tests.append(function_path.as_posix())
     return tests
 
 
