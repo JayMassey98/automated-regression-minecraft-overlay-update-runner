@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import json
 import shutil
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest import mock
 
 from support import TempDirTestCase, write
 
 import armour_paths
 from armour_common import ArmourError
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def make_pack(path: Path) -> None:
