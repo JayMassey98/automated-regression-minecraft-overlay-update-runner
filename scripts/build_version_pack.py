@@ -505,31 +505,33 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
         staged_map.parent.mkdir(parents=True, exist_ok=True)
         staged_map.write_text(json.dumps(result.source_map, indent=1), encoding="utf-8")
 
-    out_saved = False
-    map_saved = False
-    out_installed = False
-    map_installed = False
+    out_existed_before_commit = out.exists()
+    map_existed_before_commit = (
+        source_map_path.exists() if source_map_path is not None else False
+    )
     try:
-        if out.exists():
+        if out_existed_before_commit:
             out.rename(out_backup)
-            out_saved = True
-        if source_map_path is not None and source_map_path.exists():
+        if map_existed_before_commit:
             source_map_path.rename(map_backup)
-            map_saved = True
         staged_out.rename(out)
-        out_installed = True
         if source_map_path is not None:
             staged_map.rename(source_map_path)
-            map_installed = True
     except BaseException:
-        if out_installed and out.exists():
-            shutil.rmtree(out, ignore_errors=True)
-        if map_installed and source_map_path is not None and source_map_path.exists():
-            source_map_path.unlink(missing_ok=True)
-        if out_saved and out_backup.exists():
+        # Recover by inspecting filesystem state rather than relying on flags
+        # which could be skipped by interruption between rename and assignment.
+        if out_backup.exists():
+            if out.exists():
+                shutil.rmtree(out, ignore_errors=True)
             out_backup.rename(out)
-        if map_saved and map_backup is not None and map_backup.exists():
+        elif not out_existed_before_commit and out.exists():
+            shutil.rmtree(out, ignore_errors=True)
+        if map_backup is not None and map_backup.exists():
+            if source_map_path.exists():
+                source_map_path.unlink(missing_ok=True)
             map_backup.rename(source_map_path)
+        elif source_map_path is not None and not map_existed_before_commit:
+            source_map_path.unlink(missing_ok=True)
         raise
     else:
         if out_saved:
