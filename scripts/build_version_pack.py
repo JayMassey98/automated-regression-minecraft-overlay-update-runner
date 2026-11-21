@@ -301,6 +301,7 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
                 f"Temporary build path already exists; refusing cleanup: {candidate}"
             )
 
+    out_existed = out.exists()
     temp.mkdir(parents=True)
     backup_created = False
     try:
@@ -334,7 +335,7 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
             if out.exists():
                 shutil.rmtree(out, ignore_errors=True)
             backup.rename(out)
-        elif not backup_created and out.exists():
+        elif not out_existed and out.exists():
             # A first build interrupted after install has no previous output.
             shutil.rmtree(out, ignore_errors=True)
         raise
