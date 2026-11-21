@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from unittest import mock
@@ -89,13 +90,15 @@ class ResolvePackTests(TempDirTestCase):
         original_is_symlink = Path.is_symlink
 
         def pretend_macos_tmp_is_symlink(path: Path) -> bool:
-            return path == Path("/tmp") or original_is_symlink(path)
+            return path == Path(os.path.sep, "tmp") or original_is_symlink(path)
 
         with (
             mock.patch.object(armour_paths.sys, "platform", "darwin"),
             mock.patch.object(Path, "is_symlink", pretend_macos_tmp_is_symlink),
         ):
-            armour_paths.reject_symlink_components(Path("/tmp/ordinary/output"), Path("/"))
+            armour_paths.reject_symlink_components(
+                Path(os.path.sep, "tmp", "ordinary", "output"), Path("/")
+            )
 
     def test_rejects_traversal_and_absolute_paths(self) -> None:
         make_pack(self.tmp / "pack")
