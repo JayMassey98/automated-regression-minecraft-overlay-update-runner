@@ -257,14 +257,16 @@ class BuildTests(TempDirTestCase):
         write(out / "keep.txt", "previous")
         original_rename = build_version_pack.Path.rename
 
-        def fail_backup_rename(path, target):
+        def fail_backup_rename(path: Path, target: Path) -> Path:
             if target.name.endswith("armour-backup"):
                 raise OSError("simulated backup rename failure")
             return original_rename(path, target)
 
-        with mock.patch.object(build_version_pack.Path, "rename", fail_backup_rename):
-            with self.assertRaisesRegex(OSError, "simulated backup rename failure"):
-                build_version_pack.build_flattened_pack(repo, out, (90, 0))
+        with (
+            mock.patch.object(build_version_pack.Path, "rename", fail_backup_rename),
+            self.assertRaisesRegex(OSError, "simulated backup rename failure"),
+        ):
+            build_version_pack.build_flattened_pack(repo, out, (90, 0))
         self.assertEqual((out / "keep.txt").read_text(), "previous")
         self.assertFalse((out / "pack.mcmeta").exists())
 
@@ -361,23 +363,25 @@ class MainTests(TempDirTestCase):
         write(source_map, '{"previous": "map"}')
         original_rename = build_version_pack.Path.rename
 
-        def fail_map_commit(path, target):
+        def fail_map_commit(path: Path, target: Path) -> Path:
             if path.name.endswith(".armour-main-stage"):
                 raise OSError("simulated map commit failure")
             return original_rename(path, target)
 
-        with mock.patch.object(build_version_pack.Path, "rename", fail_map_commit):
-            with self.assertRaisesRegex(OSError, "simulated map commit failure"):
-                self.run_main(
+        with (
+            mock.patch.object(build_version_pack.Path, "rename", fail_map_commit),
+            self.assertRaisesRegex(OSError, "simulated map commit failure"),
+        ):
+            self.run_main(
                     "--repo",
                     str(repo),
                     "--pack-version",
                     "90",
                     "--out",
                     str(out),
-                    "--source-map",
-                    str(source_map),
-                )
+                "--source-map",
+                str(source_map),
+            )
         self.assertEqual((out / "old.txt").read_text(), "previous pack")
         self.assertEqual(source_map.read_text(), '{"previous": "map"}')
         self.assertFalse((out / "pack.mcmeta").exists())
