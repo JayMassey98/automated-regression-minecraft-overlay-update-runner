@@ -101,14 +101,22 @@ def set_output(name: str, value: str) -> None:
 # =============================================================================
 
 
-def _open_url(url: str, timeout: float) -> Any:  # noqa: ANN401 - urllib's response type
-    """Open an HTTPS URL (nothing else: no `file:` or plain `http:`)."""
-    if urllib.parse.urlsplit(url).scheme != "https":
-        msg = f"Refusing to download from a non-HTTPS URL: {url}"
-        raise ArmourError(msg)
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310
-    return urllib.request.urlopen(request, timeout=timeout)  # noqa: S310
+class _HTTPSRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Allow redirects only to HTTPS destinations."""
 
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if urllib.parse.urlsplit(newurl).scheme.lower() != "https":
+            raise ArmourError(f"Refusing redirect to a non-HTTPS URL: {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_url(url: str, timeout: float) -> Any:  # noqa: ANN401 - urllib response type
+    """Open HTTPS URLs and enforce HTTPS across redirects."""
+    if urllib.parse.urlsplit(url).scheme.lower() != "https":
+        raise ArmourError(f"Refusing to download from a non-HTTPS URL: {url}")
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})  # noqa: S310
+    opener = urllib.request.build_opener(_HTTPSRedirectHandler)
+    return opener.open(request, timeout=timeout)
 
 def _is_retryable(error: Exception) -> bool:
     """Retry network trouble and server errors, but not a 404 or similar."""
