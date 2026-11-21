@@ -571,10 +571,15 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
     )
     journal = out.with_name(f".{out.name}.armour-main-transaction.json")
     journal_tmp = journal.with_name(f".{journal.name}.tmp")
-    journal_tmp.write_text(json.dumps({
-        "out_existed": out_existed_before_commit,
-        "map_existed": map_existed_before_commit,
-    }), encoding="utf-8")
+    journal_tmp.write_text(
+        json.dumps(
+            {
+                "out_existed": out_existed_before_commit,
+                "map_existed": map_existed_before_commit,
+            }
+        ),
+        encoding="utf-8",
+    )
     journal_tmp.replace(journal)
     try:
         if out_existed_before_commit:
