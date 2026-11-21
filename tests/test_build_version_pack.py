@@ -360,7 +360,7 @@ class MainTests(TempDirTestCase):
         self.assertFalse(map_backup.exists())
         self.assertFalse(journal.exists())
 
-    def test_recovery_keeps_new_outputs_after_committed_cleanup_interruption(self) -> None:
+    def test_recovery_preserves_committed_outputs(self) -> None:
         out = self.tmp / "out"
         source_map = self.tmp / "maps/source-map.json"
         out_backup = out.with_name(".out.armour-main-backup")
