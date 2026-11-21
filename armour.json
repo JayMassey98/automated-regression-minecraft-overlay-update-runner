@@ -1,0 +1,5 @@
+{
+  "pack_name": "armour_ci_fixture",
+  "tests_namespace": "armour_ci_fixture_test",
+  "pack_path": "tests/fixtures/server-pack"
+}

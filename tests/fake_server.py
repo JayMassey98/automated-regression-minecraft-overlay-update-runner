@@ -35,12 +35,12 @@ def main(mode: str) -> None:
                 log("Couldn't parse demo:thing", "ERROR")
                 print("    Unknown command near 'foo'", flush=True)
             if mode == "fails":
-                log("[Server] ET_FAIL generic/b - expected 1, got 2")
-                log("[Server] ET_COUNTS 1 failed of 2")
-                log("[Server] ET_RESULT FAILED")
+                log("[Server] ARMOUR_FAIL generic/b - expected 1, got 2")
+                log("[Server] ARMOUR_COUNTS 1 failed of 2")
+                log("[Server] ARMOUR_RESULT FAILED")
             else:
-                log("[Server] ET_COUNTS 2 passed of 2")
-                log("[Server] ET_RESULT PASSED")
+                log("[Server] ARMOUR_COUNTS 2 passed of 2")
+                log("[Server] ARMOUR_RESULT PASSED")
 
 
 if __name__ == "__main__":

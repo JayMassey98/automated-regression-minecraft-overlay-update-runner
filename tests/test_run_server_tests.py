@@ -31,11 +31,38 @@ def fast_pauses() -> AbstractContextManager[object]:
 
 
 class StageTests(TempDirTestCase):
-    def test_stage_tests_pack_requires_harness_files(self) -> None:
+    def test_stage_tests_pack_needs_the_tests_namespace_folder(self) -> None:
         pack = make_tests_pack(self.tmp, "demo_test")
-        (pack / "data/demo_test/function/assert/block.mcfunction").unlink()
-        with self.assertRaisesRegex(ArmourError, "assert/block.mcfunction"):
-            run_server_tests.stage_tests_pack(pack, self.tmp / "out", "demo_test")
+        with self.assertRaisesRegex(ArmourError, "data.other.function"):
+            run_server_tests.stage_tests_pack(pack, self.tmp / "out", "other")
+
+    def test_stage_tests_pack_writes_the_run_tests_tag(self) -> None:
+        pack = make_tests_pack(self.tmp, "demo_test")
+        out = self.tmp / "out"
+        run_server_tests.stage_tests_pack(pack, out, "demo_test")
+        self.assertTrue((out / "data/armour/tags/function/run_tests.json").is_file())
+
+    def test_stage_harness_pack_copies_the_shared_pack_and_widens_it(self) -> None:
+        out = self.tmp / "out"
+        run_server_tests.stage_harness_pack(out)
+        function = out / "data/armour/function"
+        self.assertTrue((function / "harness/start.mcfunction").is_file())
+        self.assertTrue((function / "assert/block.mcfunction").is_file())
+        mcmeta = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
+        self.assertEqual(mcmeta["pack"]["max_format"], [9999, 0])
+
+    def test_stage_harness_pack_leaves_the_original_alone(self) -> None:
+        before = (run_server_tests.HARNESS_PACK_DIR / "pack.mcmeta").read_text()
+        run_server_tests.stage_harness_pack(self.tmp / "out")
+        after = (run_server_tests.HARNESS_PACK_DIR / "pack.mcmeta").read_text()
+        self.assertEqual(before, after)
+
+    def test_stage_harness_pack_reports_a_missing_pack(self) -> None:
+        with (
+            mock.patch.object(run_server_tests, "HARNESS_PACK_DIR", self.tmp / "gone"),
+            self.assertRaisesRegex(ArmourError, "submodule update --init"),
+        ):
+            run_server_tests.stage_harness_pack(self.tmp / "out")
 
     def test_stage_tests_pack_widens_format_and_regenerates(self) -> None:
         pack = make_tests_pack(self.tmp, "demo_test")
@@ -47,20 +74,21 @@ class StageTests(TempDirTestCase):
             (out / "data/demo_test/function/harness/run_tests.mcfunction").is_file()
         )
 
-    def test_legacy_gametest_folders_are_not_staged(self) -> None:
-        pack = make_tests_pack(self.tmp, "demo_test")
-        write(pack / "data/demo_test/structure/old.nbt")
-        write(pack / "data/demo_test/test_instance/old.json")
-        out = self.tmp / "out"
-        run_server_tests.stage_tests_pack(pack, out, "demo_test")
-        self.assertFalse((out / "data/demo_test/structure").exists())
-        self.assertFalse((out / "data/demo_test/test_instance").exists())
-
-    def test_server_properties_enable_both_packs(self) -> None:
+    def test_server_port_is_os_assigned_for_parallel_runs(self) -> None:
+        self.assertEqual(run_server_tests.SERVER_PORT, 0)
         text = run_server_tests.SERVER_PROPERTIES.format(
             pack_name="demo", tests_namespace="demo_test"
         )
-        self.assertIn("initial-enabled-packs=vanilla,file/demo,file/demo_test\n", text)
+        self.assertIn("server-port=0\n", text)
+
+    def test_server_properties_enable_all_three_packs(self) -> None:
+        text = run_server_tests.SERVER_PROPERTIES.format(
+            pack_name="demo", tests_namespace="demo_test"
+        )
+        self.assertIn(
+            "initial-enabled-packs=vanilla,file/armour,file/demo,file/demo_test\n",
+            text,
+        )
         self.assertIn(f"server-port={run_server_tests.SERVER_PORT}\n", text)
 
     def test_write_server_files(self) -> None:
@@ -104,6 +132,18 @@ class StageDataPackTests(TempDirTestCase):
         mcmeta = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
         self.assertEqual(mcmeta["pack"]["max_format"], [9999, 0])
 
+    def test_overlay_directory_symlink_escape_is_rejected(self) -> None:
+        repo = self.make_repo()
+        outside = self.tmp / "outside"
+        outside.mkdir()
+        (repo / "ov").rename(repo / "ov-original")
+        try:
+            (repo / "ov").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "escapes the pack|Symbolic links"):
+            run_server_tests.stage_data_pack(repo, self.tmp / "out", widen=False)
+
     def test_missing_overlay_folder(self) -> None:
         repo = self.make_repo()
         for path in sorted(repo.joinpath("ov").rglob("*"), reverse=True):
@@ -117,12 +157,13 @@ class AnalyseTests(unittest.TestCase):
     def test_flags_only_our_packs(self) -> None:
         lines = [
             "[12:00:00] [Server thread/ERROR]: Couldn't parse demo:thing",
+            "[12:00:00] [Server thread/ERROR]: Couldn't parse armour:harness/x",
             "[12:00:00] [Server thread/ERROR]: something about another pack",
-            "[12:00:01] [Server thread/INFO]: [Server] ET_FAIL windspanner/a - bad",
-            "[12:00:02] [Server thread/INFO]: [Server] ET_RESULT FAILED",
+            "[12:00:01] [Server thread/INFO]: [Server] ARMOUR_FAIL windspanner/a - bad",
+            "[12:00:02] [Server thread/INFO]: [Server] ARMOUR_RESULT FAILED",
         ]
-        found = run_server_tests.analyse(lines, ("demo", "demo_test"))
-        self.assertEqual(len(found.load_errors), 1)
+        found = run_server_tests.analyse(lines, ("armour", "demo", "demo_test"))
+        self.assertEqual(len(found.load_errors), 2)
         self.assertEqual(found.fails, ["windspanner/a - bad"])
         self.assertEqual(found.result, "FAILED")
 
@@ -152,18 +193,15 @@ class AnalyseTests(unittest.TestCase):
 
     def test_harness_lines(self) -> None:
         lines = [
-            "x ET_SKIP a",
-            "x ET_SKIP b",
-            "x ET_COUNTS 3 passed",
-            "x ET_RESULT PASSED",
-            "x ET_DIAG pack list",
-            "x ET_ERROR harness broke",
+            "x ARMOUR_SKIP a",
+            "x ARMOUR_SKIP b",
+            "x ARMOUR_COUNTS 3 passed",
+            "x ARMOUR_RESULT PASSED",
+            "x ARMOUR_ERROR harness broke",
         ]
         found = run_server_tests.analyse(lines, ("demo",))
-        self.assertEqual(found.skips, 2)
         self.assertEqual(found.counts, "3 passed")
         self.assertEqual(found.result, "PASSED")
-        self.assertEqual(found.diag, ["pack list"])
         self.assertEqual(found.errors, ["harness broke"])
 
 
@@ -174,7 +212,7 @@ class RunTestsOnServerTests(TempDirTestCase):
             return run_server_tests.run_tests_on_server(
                 command,
                 self.tmp,
-                "function demo_test:harness/start",
+                "function armour:harness/start",
                 startup_timeout=timeouts.get("startup", 10),
                 test_timeout=timeouts.get("test", 10),
             )
@@ -239,13 +277,12 @@ class ReportTests(unittest.TestCase):
         self.assertIn("last 60 server log lines", printed)
         self.assertIn("last line", printed)
 
-    def test_annotations_and_diagnostics(self) -> None:
+    def test_annotations(self) -> None:
         found = run_server_tests.Analysis(
             fails=["f"],
             errors=["h"],
             load_errors=["l"],
             load_warnings=["w"],
-            diag=["d"],
         )
         _, printed = self.report(found)
         for expected in (
@@ -253,44 +290,232 @@ class ReportTests(unittest.TestCase):
             "::error title=Pack failed to load (1.21.11)::l",
             "::error title=Test harness (1.21.11)::h",
             "::error title=Test failed (1.21.11)::f",
-            "ET_DIAG d",
         ):
             self.assertIn(expected, printed)
 
 
 @unittest.skipIf(sys.platform == "win32", "needs a POSIX shell script as fake java")
 class MainTests(TempDirTestCase):
-    def run_main(self, mode: str) -> tuple[int, str]:
+    def run_main(
+        self, mode: str, *, nested: bool = False, default_work_dir: bool = False
+    ) -> tuple[int, str]:
         repo = self.tmp / "repo"
-        write(repo / "armour.json", '{"pack_name": "demo"}')
-        write(repo / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
-        write(repo / "data/demo/function/a.mcfunction")
+        pack = repo / "packs" / "deep pack" if nested else repo
+        config = {"pack_name": "demo"}
+        if nested:
+            config["pack_path"] = "packs/deep pack"
+        write(repo / "armour.json", json.dumps(config))
+        write(pack / "pack.mcmeta", json.dumps({"pack": {"max_format": 94}}))
+        write(pack / "data/demo/function/a.mcfunction")
         make_tests_pack(repo, "demo_test")
-        java = self.tmp / "fake-java"
+        java = repo / "tools" / "java"
+        java.parent.mkdir(parents=True)
         java.write_text(
             f'#!/bin/sh\nexec "{sys.executable}" "{FAKE_SERVER}" "{mode}"\n'
         )
         java.chmod(java.stat().st_mode | stat.S_IEXEC)
         jar = self.tmp / "server.jar"
         jar.write_bytes(b"")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--server-jar",
+            "../server.jar",
+            "--java",
+            "tools/java",
+            "--repo",
+            str(repo),
+            "--tests-dir",
+            "tests",
+            "--startup-timeout",
+            "10",
+            "--test-timeout",
+            "10",
+        ]
+        if not default_work_dir:
+            args.extend(["--work-dir", str(self.tmp / "run")])
         out = io.StringIO()
         with fast_pauses(), redirect_stdout(out):
-            code = run_server_tests.main(
-                [
-                    "--version", "1.21.11", "--server-url", "https://x.test/s.jar",
-                    "--sha1", "0", "--server-jar", str(jar), "--java", str(java),
-                    "--repo", str(repo), "--tests-dir", str(repo / "tests"),
-                    "--work-dir", str(self.tmp / "run"), "--startup-timeout", "10",
-                    "--test-timeout", "10",
-                ]
-            )  # fmt: skip
+            code = run_server_tests.main(args)
         return code, out.getvalue()
+
+    def test_work_directory_inside_repository_is_rejected_before_deletion(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        sentinel = repo / "keep.txt"
+        sentinel.write_text("safe")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--work-dir",
+            ".",
+        ]
+        with self.assertRaisesRegex(ArmourError, "must not overlap"):
+            run_server_tests.main(args)
+        self.assertEqual(sentinel.read_text(), "safe")
+
+    def test_cache_directory_inside_nested_source_pack_is_rejected(self) -> None:
+        repo = self.tmp / "repo"
+        pack = repo / "packs" / "source"
+        write(
+            repo / "armour.json",
+            json.dumps({"pack_name": "demo", "pack_path": "packs/source"}),
+        )
+        write(pack / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(pack / "data/demo/function/a.mcfunction")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--cache-dir",
+            "packs/source/cache",
+            "--work-dir",
+            str(self.tmp / "work"),
+        ]
+        with self.assertRaisesRegex(ArmourError, "must not overlap the repository"):
+            run_server_tests.main(args)
+        self.assertTrue((pack / "pack.mcmeta").is_file())
+        self.assertFalse((pack / "cache").exists())
+
+    def test_symlinked_work_directory_is_rejected_without_deleting_target(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        external = self.tmp / "external"
+        write(external / "keep.txt", "safe")
+        link = self.tmp / "work-link"
+        try:
+            link.symlink_to(external, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--work-dir",
+            str(link),
+        ]
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            run_server_tests.main(args)
+        self.assertEqual((external / "keep.txt").read_text(), "safe")
+
+    def test_symlinked_tests_root_is_rejected(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        tests_target = self.tmp / "real-tests"
+        make_tests_pack(tests_target, "demo_test")
+        tests_link = self.tmp / "tests-link"
+        try:
+            tests_link.symlink_to(tests_target, target_is_directory=True)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--repo",
+            str(repo),
+            "--tests-dir",
+            str(tests_link),
+            "--work-dir",
+            str(self.tmp / "work"),
+        ]
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            run_server_tests.main(args)
+
+    def test_concurrent_run_cannot_delete_a_shared_work_directory(self) -> None:
+        repo = self.tmp / "repo"
+        write(repo / "armour.json", '{"pack_name": "demo"}')
+        write(repo / "pack.mcmeta", '{"pack": {"max_format": 94}}')
+        write(repo / "data/demo/function/a.mcfunction")
+        make_tests_pack(repo, "demo_test")
+        jar = self.tmp / "server.jar"
+        jar.write_bytes(b"")
+        work = self.tmp / "run"
+        sentinel = work / "keep.txt"
+        write(sentinel, "safe")
+        args = [
+            "--version",
+            "1.21.11",
+            "--server-url",
+            "https://x.test/s.jar",
+            "--sha1",
+            "0",
+            "--server-jar",
+            str(jar),
+            "--repo",
+            str(repo),
+            "--tests-dir",
+            "tests",
+            "--work-dir",
+            str(work),
+        ]
+        with (
+            run_server_tests.main_transaction_lock(work),
+            self.assertRaisesRegex(ArmourError, "Another build"),
+        ):
+            run_server_tests.main(args)
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "safe")
+
+    def test_default_work_directory_is_a_sibling_of_repo(self) -> None:
+        code, printed = self.run_main("passes", default_work_dir=True)
+        self.assertEqual(code, 0, printed)
+        work = self.tmp / ".repo-server-run"
+        self.assertTrue((work / "world/datapacks/demo/pack.mcmeta").is_file())
+        self.assertTrue((self.tmp / "repo/pack.mcmeta").is_file())
 
     def test_passing_pack(self) -> None:
         code, printed = self.run_main("passes")
         self.assertEqual(code, 0, printed)
         self.assertIn("Staged the data pack and 2 tests", printed)
-        self.assertTrue((self.tmp / "run/world/datapacks/demo/pack.mcmeta").is_file())
+        datapacks = self.tmp / "run/world/datapacks"
+        self.assertTrue((datapacks / "demo/pack.mcmeta").is_file())
+        self.assertTrue((datapacks / "demo_test/pack.mcmeta").is_file())
+        self.assertTrue((datapacks / "armour/pack.mcmeta").is_file())
+        self.assertIn(
+            "file/armour,file/demo,file/demo_test",
+            (self.tmp / "run/server.properties").read_text(),
+        )
+
+    def test_nested_pack_is_staged_without_modifying_the_source(self) -> None:
+        code, printed = self.run_main("passes", nested=True)
+        self.assertEqual(code, 0, printed)
+        staged = self.tmp / "run/world/datapacks/demo"
+        self.assertTrue((staged / "pack.mcmeta").is_file())
+        self.assertTrue((staged / "data/demo/function/a.mcfunction").is_file())
+        source = self.tmp / "repo/packs/deep pack"
+        self.assertEqual(
+            json.loads((source / "pack.mcmeta").read_text())["pack"]["max_format"],
+            94,
+        )
 
     def test_failing_test_gives_exit_code_1(self) -> None:
         code, printed = self.run_main("fails")

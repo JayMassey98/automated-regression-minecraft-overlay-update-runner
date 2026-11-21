@@ -1,11 +1,14 @@
-# Offline checks for ARMOUR's scripts and docs (no Minecraft server required).
+# Offline checks plus real-server smoke tests for ARMOUR.
 name: Self-test
 
 on:
   pull_request:
   push:
     branches:
+      - main
       - automated_testing
+      - path_ownership
+      - path_ownership_review
 
 permissions:
   contents: read
@@ -14,25 +17,15 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-
-      # Check out repository files.
       - uses: actions/checkout@v7
-  
-      # Check GitHub Actions workflow syntax and rules.
       - uses: raven-actions/actionlint@v2.2.0
-
-      # Check JavaScript and JSON syntax and rules.
       - uses: biomejs/setup-biome@v2.7.1
         with:
           version: latest
       - run: biome check scripts/
-
-      # Check Markdown syntax and rules.
       - uses: DavidAnson/markdownlint-cli2-action@v25
         with:
           globs: README.md
-
-      # Check Python syntax and rules.
       - uses: astral-sh/ruff-action@v4.1.0
         with:
           version: "latest"
@@ -43,7 +36,71 @@ jobs:
           args: format --check
 
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m unittest discover -s tests -v
+
+  discover_versions:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.versions.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - id: versions
+        run: python scripts/get_minecraft_versions.py --release-from 1.21.9 --snapshot-after 26.3
+
+  server_integration:
+    needs: discover_versions
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.discover_versions.outputs.matrix) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: python3 -m unittest discover -s tests -v
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - name: Verify passing and deliberately failing tests on a real server
+        shell: bash
+        env:
+          MINECRAFT_VERSION: ${{ matrix.id }}
+          MINECRAFT_KIND: ${{ matrix.kind }}
+          MINECRAFT_SERVER_URL: ${{ matrix.server_url }}
+          MINECRAFT_SERVER_SHA1: ${{ matrix.sha1 }}
+        run: |
+          set +e
+          python scripts/run_server_tests.py \
+            --version "$MINECRAFT_VERSION" \
+            --kind "$MINECRAFT_KIND" \
+            --server-url "$MINECRAFT_SERVER_URL" \
+            --sha1 "$MINECRAFT_SERVER_SHA1" \
+            --repo . \
+            --pack-path tests/fixtures/server-pack \
+            --tests-dir tests/fixtures/server-tests \
+            > "$RUNNER_TEMP/armour-server.log" 2>&1
+          status=$?
+          set -e
+          cat "$RUNNER_TEMP/armour-server.log"
+          if [[ "$status" -ne 1 ]] || ! grep -Fq \
+            "passed=1 failed=1 skipped=0; result=FAILED; 1 failures; 0 pack load errors" \
+            "$RUNNER_TEMP/armour-server.log"; then
+            echo "The server did not report the expected one-pass/one-failure result."
+            exit 1
+          fi
+          echo "The server correctly reported one passing and one deliberately failing test."

@@ -20,9 +20,6 @@ TESTS = ROOT / "tests"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-# Imported only after `scripts/` is on the path.
-import run_server_tests  # noqa: E402
-
 
 def write(path: Path, text: str = "") -> None:
     """Write a text file, creating its folders."""
@@ -31,7 +28,7 @@ def write(path: Path, text: str = "") -> None:
 
 
 def make_tests_pack(root: Path, namespace: str) -> Path:
-    """Create a minimal tests pack with two tests and the required harness files."""
+    """Create a minimal tests pack with two tests."""
     pack = root / "tests"
     write(
         pack / "pack.mcmeta",
@@ -40,8 +37,6 @@ def make_tests_pack(root: Path, namespace: str) -> Path:
         ),
     )
     function = pack / "data" / namespace / "function"
-    for name in run_server_tests.REQUIRED_TEST_FILES:
-        write(function / name, "# harness\n")
     write(function / "windspanner" / "a.mcfunction")
     write(function / "generic" / "b.mcfunction")
     return pack

@@ -14,7 +14,25 @@ class LoadTests(TempDirTestCase):
         config = armour_config.load(self.tmp)
         self.assertEqual(config.pack_name, "my_pack")
         self.assertEqual(config.tests_namespace, "my_pack_test")
-        self.assertEqual(config.start_command, "function my_pack_test:harness/start")
+
+    def test_optional_pack_path(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": "packs/p"}')
+        self.assertEqual(armour_config.load(self.tmp).pack_path, "packs/p")
+
+    def test_empty_pack_path_is_rejected(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": ""}')
+        with self.assertRaisesRegex(ArmourError, "pack_path"):
+            armour_config.load(self.tmp)
+
+    def test_invalid_utf8_is_a_clean_error(self) -> None:
+        (self.tmp / "armour.json").write_bytes(bytes([255]))
+        with self.assertRaisesRegex(ArmourError, "UTF-8"):
+            armour_config.load(self.tmp)
+
+    def test_invalid_pack_path_type(self) -> None:
+        write(self.tmp / "armour.json", '{"pack_name": "p", "pack_path": 7}')
+        with self.assertRaisesRegex(ArmourError, "pack_path"):
+            armour_config.load(self.tmp)
 
     def test_explicit_namespace(self) -> None:
         write(
@@ -26,6 +44,23 @@ class LoadTests(TempDirTestCase):
     def test_empty_namespace_falls_back_to_default(self) -> None:
         write(self.tmp / "armour.json", '{"pack_name": "p", "tests_namespace": ""}')
         self.assertEqual(armour_config.load(self.tmp).tests_namespace, "p_test")
+
+    def test_start_command_runs_the_shared_harness(self) -> None:
+        self.assertEqual(armour_config.START_COMMAND, "function armour:harness/start")
+
+    def test_names_must_not_collide(self) -> None:
+        bad = {
+            "pack named like the harness": '{"pack_name": "armour"}',
+            "tests named like the harness": (
+                '{"pack_name": "p", "tests_namespace": "armour"}'
+            ),
+            "tests named like the pack": ('{"pack_name": "p", "tests_namespace": "p"}'),
+        }
+        for label, text in bad.items():
+            with self.subTest(label):
+                write(self.tmp / "armour.json", text)
+                with self.assertRaisesRegex(ArmourError, "must all be different"):
+                    armour_config.load(self.tmp)
 
     def test_missing_file(self) -> None:
         with self.assertRaisesRegex(ArmourError, "armour.json is missing"):
@@ -39,8 +74,12 @@ class LoadTests(TempDirTestCase):
             "empty pack name": '{"pack_name": ""}',
             "pack name not a string": '{"pack_name": 7}',
             "unsafe pack name": '{"pack_name": "a,b"}',
+            "dot pack name": '{"pack_name": "."}',
+            "dot-dot pack name": '{"pack_name": ".."}',
             "uppercase pack name": '{"pack_name": "Pack"}',
             "unsafe namespace": '{"pack_name": "p", "tests_namespace": "x/y"}',
+            "dot namespace": '{"pack_name": "p", "tests_namespace": "."}',
+            "dot-dot namespace": '{"pack_name": "p", "tests_namespace": ".."}',
         }
         for label, text in bad.items():
             with self.subTest(label):
