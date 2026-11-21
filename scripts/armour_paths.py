@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path, PurePosixPath
 
 from armour_common import ArmourError
@@ -189,10 +190,20 @@ def reject_symlink_components(path: Path, base: Path) -> None:
     current = base
     for part in relative.parts:
         current = current / part
-        if current.is_symlink():
-            raise ArmourError(
-                f"Symbolic links are not allowed in destination paths: {current}"
-            )
+        if not current.is_symlink():
+            continue
+        # macOS commonly exposes /tmp, /var and /etc as OS-managed aliases.
+        # Allow those specific aliases, but still inspect every subsequent
+        # component so user-created symlinks beneath them remain rejected.
+        if sys.platform == "darwin" and current in {
+            Path("/tmp"),
+            Path("/var"),
+            Path("/etc"),
+        }:
+            continue
+        raise ArmourError(
+            f"Symbolic links are not allowed in destination paths: {current}"
+        )
 
 
 def paths_overlap(first: Path, second: Path) -> bool:
