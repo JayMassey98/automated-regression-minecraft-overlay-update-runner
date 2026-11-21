@@ -324,8 +324,6 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
             out.rename(backup)
             backup_created = True
         temp.rename(out)
-        if backup_created:
-            shutil.rmtree(backup)
     except BaseException:
         if temp.exists():
             shutil.rmtree(temp, ignore_errors=True)
@@ -340,6 +338,8 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
             shutil.rmtree(out, ignore_errors=True)
         raise
     else:
+        if backup_created:
+            shutil.rmtree(backup, ignore_errors=True)
         return result
 
 
