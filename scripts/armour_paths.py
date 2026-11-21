@@ -196,7 +196,7 @@ def reject_symlink_components(path: Path, base: Path) -> None:
         # Allow those specific aliases, but still inspect every subsequent
         # component so user-created symlinks beneath them remain rejected.
         if sys.platform == "darwin" and current in {
-            Path("/tmp"),
+            Path(os.path.sep, "tmp"),
             Path("/var"),
             Path("/etc"),
         }:
