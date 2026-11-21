@@ -414,7 +414,8 @@ def recover_main_transaction(  # noqa: C901, PLR0912
     if (
         not isinstance(state, dict)
         or not all(
-            isinstance(state.get(key), bool) for key in ("out_existed", "map_existed")
+            isinstance(state.get(key), bool)
+        for key in ("out_existed", "map_existed", "committed")
         )
         or state.get("map_path")
         != (str(source_map_path) if source_map_path is not None else None)
@@ -435,18 +436,24 @@ def recover_main_transaction(  # noqa: C901, PLR0912
     for path in (out, out_backup, staged_out, source_map_path, map_backup, staged_map):
         if path is not None:
             reject_symlink_components(path, Path(path.anchor))
-    if out_backup.exists():
-        if out.exists():
+    if state["committed"]:
+        if out_backup.exists():
+            shutil.rmtree(out_backup, ignore_errors=True)
+        if map_backup is not None:
+            map_backup.unlink(missing_ok=True)
+    else:
+        if out_backup.exists():
+            if out.exists():
+                shutil.rmtree(out, ignore_errors=True)
+            out_backup.rename(out)
+        elif not state["out_existed"] and out.exists():
             shutil.rmtree(out, ignore_errors=True)
-        out_backup.rename(out)
-    elif not state["out_existed"] and out.exists():
-        shutil.rmtree(out, ignore_errors=True)
-    if map_backup is not None and map_backup.exists():
-        if source_map_path.exists():
+        if map_backup is not None and map_backup.exists():
+            if source_map_path.exists():
+                source_map_path.unlink(missing_ok=True)
+            map_backup.rename(source_map_path)
+        elif source_map_path is not None and not state["map_existed"]:
             source_map_path.unlink(missing_ok=True)
-        map_backup.rename(source_map_path)
-    elif source_map_path is not None and not state["map_existed"]:
-        source_map_path.unlink(missing_ok=True)
     if staged_out.exists():
         shutil.rmtree(staged_out, ignore_errors=True)
     if staged_map is not None:
@@ -581,6 +588,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             {
                 "out_existed": out_existed_before_commit,
                 "map_existed": map_existed_before_commit,
+                "committed": False,
                 "map_path": (
                     str(source_map_path) if source_map_path is not None else None
                 ),
@@ -614,6 +622,20 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             source_map_path.unlink(missing_ok=True)
         raise
     else:
+        journal_tmp.write_text(
+            json.dumps(
+                {
+                    "out_existed": out_existed_before_commit,
+                    "map_existed": map_existed_before_commit,
+                    "committed": True,
+                    "map_path": (
+                        str(source_map_path) if source_map_path is not None else None
+                    ),
+                }
+            ),
+            encoding="utf-8",
+        )
+        journal_tmp.replace(journal)
         if out_backup.exists():
             shutil.rmtree(out_backup)
         if map_backup is not None and map_backup.exists():
