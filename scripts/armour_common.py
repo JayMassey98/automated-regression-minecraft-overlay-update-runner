@@ -127,6 +127,8 @@ def _open_url(url: str, timeout: float) -> Any:  # noqa: ANN401 - urllib respons
     opener = urllib.request.build_opener(_HTTPSRedirectHandler)
     return opener.open(request, timeout=timeout)
 
+
+
 def _is_retryable(error: Exception) -> bool:
     """Retry network trouble and server errors, but not a 404 or similar."""
     if isinstance(error, urllib.error.HTTPError):
