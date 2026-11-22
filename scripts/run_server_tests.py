@@ -418,7 +418,19 @@ def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> N
         _record_registry_failure(found, lines, index)
         return
     if level.group(1) == "WARN":
-        found.load_warnings.append(line)
+        # Some pack-loading failures are logged as warnings by Minecraft. They
+        # must fail the check (especially --load-only), rather than being
+        # reported as a successful load.
+        fatal_pack_warning_markers = (
+            "Failed to read pack",
+            "Missing data pack",
+            "Failed to load pack",
+            "Couldn't load pack",
+        )
+        if any(marker in line for marker in fatal_pack_warning_markers):
+            found.load_errors.append(line)
+        else:
+            found.load_warnings.append(line)
         return
     # The reason (the exact command that did not parse) is on the lines after this one.
     detail = []
