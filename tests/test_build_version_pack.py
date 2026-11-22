@@ -222,11 +222,8 @@ class BuildTests(TempDirTestCase):
             "mcdoc/java/data/worldgen/density_function.mcdoc",
             self.build(repo, (90, 0)),
         )
-        self.assertEqual(
-            (self.tmp / "out/mcdoc/java/data/worldgen/density_function.mcdoc")
-            .read_text(encoding="utf-8"),
-            schema,
-        )
+        staged_schema = self.tmp / "out/mcdoc/java/data/worldgen/density_function.mcdoc"
+        self.assertEqual(staged_schema.read_text(encoding="utf-8"), schema)
 
     def test_spyglass_json_travels_with_the_pack(self) -> None:
         repo = make_repo(self.tmp / "repo")
