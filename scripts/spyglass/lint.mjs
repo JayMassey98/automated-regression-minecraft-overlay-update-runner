@@ -24,11 +24,17 @@
 //                              default these are errors, because a block that
 //                              doesn't exist in a version means the pack won't
 //                              work there.
+//   --no-vanilla-baseline      report every warning as a warning. By default a
+//                              warning that Mojang's own data for the same
+//                              Minecraft version also triggers is reported as
+//                              a NOTE instead (see "Snapshot schema lag"
+//                              below).
 //
 // Exit codes: 0 = clean, 1 = lint problems or bad arguments,
 // 2 = Spyglass could not lint it.
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { format, parseArgs as parseNodeArgs } from "node:util";
@@ -60,7 +66,7 @@ export class UsageError extends Error {}
  * @param {string[]} argv arguments after the script name
  * @returns {{root: string, gameVersion: string, sourceMap?: string,
  *   cacheDir: string, failOn: "error" | "warning", allowUnsupported: boolean,
- *   allowUndeclared: boolean}}
+ *   allowUndeclared: boolean, vanillaBaseline: boolean}}
  */
 export function parseArgs(argv) {
 	let values;
@@ -76,6 +82,7 @@ export function parseArgs(argv) {
 				"fail-on": { type: "string", default: "error" },
 				"allow-unsupported": { type: "boolean", default: false },
 				"allow-undeclared": { type: "boolean", default: false },
+				"no-vanilla-baseline": { type: "boolean", default: false },
 			},
 		}));
 	} catch (error) {
@@ -95,6 +102,7 @@ export function parseArgs(argv) {
 		failOn: values["fail-on"],
 		allowUnsupported: values["allow-unsupported"],
 		allowUndeclared: values["allow-undeclared"],
+		vanillaBaseline: !values["no-vanilla-baseline"],
 	};
 }
 
@@ -106,7 +114,7 @@ export const escapeProperty = (text) =>
 
 /**
  * Build a GitHub Actions annotation line.
- * @param {"error" | "warning"} level
+ * @param {"error" | "warning" | "notice"} level
  * @param {string} title
  * @param {string} message
  * @param {{file: string, line: number, col: number, endLine: number,
@@ -356,28 +364,187 @@ async function analysePack({ args, rootUri, cacheRoot, externals, logger }) {
 	return { analysis, diagnosticsByUri };
 }
 
+// ---------------------------------------------------------------------------
+// Snapshot schema lag
+//
+// Spyglass's schemas (vanilla-mcdoc) are versioned per *release*: a field that
+// changes in 26.4 is marked `since="26.4"` / `until="26.4"`, so Spyglass checks
+// every 26.4-snapshot-N against the final 26.4 format. Mojang changes formats
+// between snapshots, so a pack that matches exactly what the game accepts in a
+// given snapshot can still get "Unknown key" warnings. Mojang's own data for
+// that snapshot gets the very same warnings.
+//
+// So we also lint the vanilla data of the version being linted (only the
+// top-level folders, such as `worldgen`, where the pack has warnings) and
+// report a pack warning as a NOTE, not a warning, when vanilla triggers the
+// same one somewhere in that folder. Schemas share structures between the
+// registries of a folder (a pack may inline in noise_settings what Mojang keeps
+// in density_function), so the match is per folder. A warning vanilla does not
+// trigger stays a warning, so real mistakes (a key Mojang removed, a typo) are
+// still visible. `--no-vanilla-baseline` turns this off.
+// ---------------------------------------------------------------------------
+
 /**
- * Print each diagnostic as an annotation and count them.
- * @returns {{errorCount: number, warningCount: number, failing: number}}
+ * The top-level folder of a pack file inside its namespace, such as `worldgen`
+ * for `data/<ns>/worldgen/noise_settings/nether.json`.
+ * @param {string} relativePath path inside the pack, with forward slashes
+ * @returns {string | undefined} undefined when it is not under `data/<ns>/`
  */
-function reportDiagnostics(diagnosticsByUri, { args, rootDir, sourceMap }) {
+export function registryCategory(relativePath) {
+	const parts = relativePath.split("/");
+	return parts[0] === "data" && parts.length >= 4 ? parts[2] : undefined;
+}
+
+/** Which warnings Mojang's own data for one Minecraft version triggers. */
+export class VanillaBaseline {
+	#byCategory = new Map();
+
+	/** Record a warning Spyglass raised on a vanilla file. */
+	addWarning(relativePath, message) {
+		const category = registryCategory(relativePath);
+		if (category === undefined) {
+			return;
+		}
+		if (!this.#byCategory.has(category)) {
+			this.#byCategory.set(category, new Set());
+		}
+		this.#byCategory.get(category).add(message);
+	}
+
+	/** Does vanilla trigger this warning in the same top-level folder? */
+	matches(relativePath, message) {
+		const category = registryCategory(relativePath);
+		return (
+			category !== undefined &&
+			(this.#byCategory.get(category)?.has(message) ?? false)
+		);
+	}
+}
+
+/** The path of a file URI inside `rootDir`, or undefined if it is not in it. */
+function relativeToRoot(uri, rootDir) {
+	try {
+		const relative = path
+			.relative(rootDir, fileURLToPath(uri))
+			.split(path.sep)
+			.join("/");
+		return relative.startsWith("..") ? undefined : relative;
+	} catch {
+		return undefined; // not a file URI
+	}
+}
+
+/**
+ * Lint Mojang's own data for `args.gameVersion` in the top-level folders where
+ * the pack has warnings, and remember which warnings it triggers.
+ * @param {string} rootDir the pack root (its spyglass.json is reused)
+ * @param {string[]} warnedFiles pack files (relative to the pack root) that
+ *   have warnings
+ * @returns {Promise<VanillaBaseline>}
+ */
+async function buildVanillaBaseline({
+	args,
+	rootDir,
+	warnedFiles,
+	cacheRoot,
+	externals,
+	logger,
+}) {
+	const categories = new Set(warnedFiles.map(registryCategory));
+	categories.delete(undefined);
+	const dependency = await je.dependency.getVanillaDatapack(
+		externals,
+		logger,
+		args.gameVersion,
+	);
+	const files = await externals.archive.decompressBall(dependency.data, {
+		stripLevel: dependency.stripLevel ?? 0,
+	});
+
+	// A fixed directory keeps Spyglass's per-root cache stable between runs.
+	const tempDir = path.join(
+		os.tmpdir(),
+		`armour-vanilla-baseline-${args.gameVersion}`,
+	);
+	fs.rmSync(tempDir, { recursive: true, force: true });
+	fs.mkdirSync(tempDir, { recursive: true });
+	try {
+		// Lint it with the same Spyglass settings as the pack.
+		const config = path.join(rootDir, "spyglass.json");
+		if (fs.existsSync(config)) {
+			fs.copyFileSync(config, path.join(tempDir, "spyglass.json"));
+		}
+		const baseline = new VanillaBaseline();
+		for (const file of files) {
+			const relative = file.path.replace(/\\/g, "/");
+			const isPackMeta = relative === "pack.mcmeta";
+			if (
+				file.type !== "file" ||
+				!(
+					isPackMeta ||
+					(relative.startsWith("data/minecraft/") &&
+						categories.has(registryCategory(relative)))
+				)
+			) {
+				continue;
+			}
+			const target = path.resolve(tempDir, relative);
+			if (!target.startsWith(tempDir + path.sep)) {
+				continue; // never write outside the temporary directory
+			}
+			fs.mkdirSync(path.dirname(target), { recursive: true });
+			fs.writeFileSync(target, file.data);
+		}
+
+		const vanillaLogger = new LintLogger(args.gameVersion);
+		const { diagnosticsByUri } = await analysePack({
+			args,
+			rootUri: core.fileUtil.ensureEndingSlash(
+				pathToFileURL(tempDir).toString(),
+			),
+			cacheRoot,
+			externals,
+			logger: vanillaLogger,
+		});
+		const trouble = [...vanillaLogger.problems, ...vanillaLogger.unsupported];
+		if (trouble.length > 0) {
+			throw new Error(trouble[0]);
+		}
+		for (const [uri, errors] of diagnosticsByUri) {
+			const relative = relativeToRoot(uri, tempDir);
+			for (const error of errors) {
+				if (relative !== undefined && error.severity === core.ErrorSeverity.Warning) {
+					baseline.addWarning(relative, error.message);
+				}
+			}
+		}
+		return baseline;
+	} finally {
+		fs.rmSync(tempDir, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Print each diagnostic as an annotation and count them. Warnings that
+ * `baseline` says Mojang's own data also triggers are printed as NOTEs.
+ * @param {VanillaBaseline} [baseline]
+ * @returns {{errorCount: number, warningCount: number, noteCount: number,
+ *   failing: number}}
+ */
+function reportDiagnostics(
+	diagnosticsByUri,
+	{ args, rootDir, sourceMap, baseline },
+) {
 	const threshold =
 		args.failOn === "warning"
 			? core.ErrorSeverity.Warning
 			: core.ErrorSeverity.Error;
-	const counts = { errorCount: 0, warningCount: 0, failing: 0 };
+	const counts = { errorCount: 0, warningCount: 0, noteCount: 0, failing: 0 };
+	const items = [];
 	const byUri = [...diagnosticsByUri].sort(([a], [b]) => a.localeCompare(b));
 	for (const [uri, errors] of byUri) {
-		let relative;
-		try {
-			relative = path
-				.relative(rootDir, fileURLToPath(uri))
-				.split(path.sep)
-				.join("/");
-		} catch {
-			continue; // not a file URI
-		}
-		if (relative.startsWith("..")) {
+		const relative = relativeToRoot(uri, rootDir);
+		if (relative === undefined) {
 			continue;
 		}
 		const file = sourceMap[relative] ?? relative;
@@ -386,35 +553,83 @@ function reportDiagnostics(diagnosticsByUri, { args, rootDir, sourceMap }) {
 				continue; // hints / information
 			}
 			const isError = error.severity >= core.ErrorSeverity.Error;
-			if (isError) {
-				counts.errorCount++;
-			} else {
-				counts.warningCount++;
-			}
-			if (error.severity >= threshold) {
-				counts.failing++;
-			}
-			// Annotations are hidden from the raw log, so print the place too.
-			const line = error.posRange.start.line + 1;
-			const col = error.posRange.start.character + 1;
-			console.log(`${file}:${line}:${col} ${error.message}`);
-			console.log(
-				annotation(
-					isError ? "error" : "warning",
-					`Spyglass (${args.gameVersion})`,
-					error.message,
-					{
-						file,
-						line,
-						col,
-						endLine: error.posRange.end.line + 1,
-						endCol: error.posRange.end.character + 1,
-					},
-				),
-			);
+			const isNote = !isError && baseline?.matches(relative, error.message);
+			items.push({ file, error, isError, isNote });
 		}
 	}
+
+	const noteCount = items.filter((item) => item.isNote).length;
+	if (noteCount > 0) {
+		const plural = noteCount === 1 ? "" : "s";
+		console.log(
+			`NOTE: ${noteCount} Spyglass warning${plural} below ${noteCount === 1 ? "is" : "are"} reported as NOTE${plural} instead of warning${plural}, ` +
+				`because Mojang's own ${args.gameVersion} data triggers the same warning${plural}. ` +
+				"Spyglass versions its schemas per release, not per snapshot, so for a snapshot it can expect a different format than the game accepts. " +
+				"This is a Spyglass limitation, not a problem with the pack. " +
+				"Warnings that Mojang's data does not trigger are still reported as warnings; " +
+				"use --no-vanilla-baseline to report these as warnings too.",
+		);
+	}
+
+	for (const { file, error, isError, isNote } of items) {
+		if (isNote) {
+			counts.noteCount++;
+		} else if (isError) {
+			counts.errorCount++;
+		} else {
+			counts.warningCount++;
+		}
+		if (!isNote && error.severity >= threshold) {
+			counts.failing++;
+		}
+		// Annotations are hidden from the raw log, so print the place too.
+		const line = error.posRange.start.line + 1;
+		const col = error.posRange.start.character + 1;
+		const location = {
+			file,
+			line,
+			col,
+			endLine: error.posRange.end.line + 1,
+			endCol: error.posRange.end.character + 1,
+		};
+		if (isNote) {
+			console.log(`NOTE: ${file}:${line}:${col} ${error.message}`);
+			console.log(
+				annotation(
+					"notice",
+					`NOTE: Spyglass (${args.gameVersion})`,
+					`${error.message}. NOTE: Mojang's own ${args.gameVersion} data triggers the same warning (Spyglass schemas are versioned per release, not per snapshot), so this is not a problem with the pack.`,
+					location,
+				),
+			);
+			continue;
+		}
+		console.log(`${file}:${line}:${col} ${error.message}`);
+		console.log(
+			annotation(
+				isError ? "error" : "warning",
+				`Spyglass (${args.gameVersion})`,
+				error.message,
+				location,
+			),
+		);
+	}
 	return counts;
+}
+
+/** Pack files (relative to the pack root) that Spyglass warned about. */
+function warnedFilesOf(diagnosticsByUri, rootDir) {
+	const files = [];
+	for (const [uri, errors] of diagnosticsByUri) {
+		const relative = relativeToRoot(uri, rootDir);
+		if (
+			relative !== undefined &&
+			errors.some((error) => error.severity === core.ErrorSeverity.Warning)
+		) {
+			files.push(relative);
+		}
+	}
+	return files;
 }
 
 /**
@@ -482,15 +697,38 @@ export async function lint(args) {
 		return EXIT_UNSUPPORTED;
 	}
 
-	const { errorCount, warningCount, failing } = reportDiagnostics(
+	// See "Snapshot schema lag" above. If the baseline cannot be built, every
+	// warning is simply reported as a warning (never fewer than before).
+	let baseline;
+	const warnedFiles = args.vanillaBaseline
+		? warnedFilesOf(diagnosticsByUri, rootDir)
+		: [];
+	if (warnedFiles.length > 0) {
+		try {
+			baseline = await buildVanillaBaseline({
+				args,
+				rootDir,
+				warnedFiles,
+				cacheRoot,
+				externals,
+				logger,
+			});
+		} catch (error) {
+			console.log(
+				`NOTE: could not check Mojang's ${args.gameVersion} data, so every warning is reported as a warning: ${describeError(error).split("\n")[0]}`,
+			);
+		}
+	}
+
+	const { errorCount, warningCount, noteCount, failing } = reportDiagnostics(
 		diagnosticsByUri,
-		{ args, rootDir, sourceMap },
+		{ args, rootDir, sourceMap, baseline },
 	);
 	const files = analysis?.analyzedFiles ?? diagnosticsByUri.size;
-	const totals = `${files} files, ${errorCount} errors, ${warningCount} warnings`;
+	const totals = `${files} files, ${errorCount} errors, ${warningCount} warnings${noteCount > 0 ? `, ${noteCount} notes` : ""}`;
 	console.log(`Spyglass ${args.gameVersion}: ${totals}`);
 	appendSummary(
-		`${failing > 0 ? "🔴" : "🟢"} \`${args.gameVersion}\`: ${totals}`,
+		`${failing > 0 ? "🔴" : "🟢"} \`${args.gameVersion}\`: ${totals}${noteCount > 0 ? " (notes: Spyglass snapshot schema lag, Mojang's own data triggers them too)" : ""}`,
 	);
 	return failing > 0 ? EXIT_LINT : 0;
 }

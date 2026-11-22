@@ -11,6 +11,8 @@ import {
 	registerSnapshotDensityFunctionTypes,
 	UsageError,
 	undeclaredSymbolRules,
+	VanillaBaseline,
+	registryCategory,
 } from "./lint.mjs";
 
 describe("parseArgs", () => {
@@ -25,6 +27,7 @@ describe("parseArgs", () => {
 				failOn: "error",
 				allowUnsupported: false,
 				allowUndeclared: false,
+				vanillaBaseline: true,
 			},
 		);
 	});
@@ -38,12 +41,14 @@ describe("parseArgs", () => {
 			"--fail-on=warning",
 			"--allow-unsupported",
 			"--allow-undeclared",
+			"--no-vanilla-baseline",
 		]);
 		assert.equal(args.sourceMap, "map.json");
 		assert.equal(args.cacheDir, "cache");
 		assert.equal(args.failOn, "warning");
 		assert.equal(args.allowUnsupported, true);
 		assert.equal(args.allowUndeclared, true);
+		assert.equal(args.vanillaBaseline, false);
 	});
 
 	it("rejects bad usage", () => {
@@ -91,6 +96,13 @@ describe("annotation", () => {
 		assert.equal(
 			text,
 			"::error file=data/a%2Cb.mcfunction,line=1,col=2,endLine=3,endColumn=4,title=Spyglass (1.21)::bad",
+		);
+	});
+
+	it("formats a notice", () => {
+		assert.equal(
+			annotation("notice", "NOTE: x", "m"),
+			"::notice title=NOTE%3A x::m",
 		);
 	});
 });
@@ -212,5 +224,40 @@ describe("undeclaredSymbolRules", () => {
 
 	it("keeps Spyglass's defaults when allowed", () => {
 		assert.ok(reports(undeclaredSymbolRules(true)).includes("warning"));
+	});
+});
+
+describe("registryCategory", () => {
+	it("is the first folder inside the namespace", () => {
+		assert.equal(registryCategory("data/minecraft/dimension_type/a.json"), "dimension_type");
+		assert.equal(registryCategory("data/x/worldgen/feature/sub/a.json"), "worldgen");
+		assert.equal(registryCategory("data/x/tags/block/a.json"), "tags");
+	});
+
+	it("has none outside data/<namespace>/<folder>/", () => {
+		assert.equal(registryCategory("pack.mcmeta"), undefined);
+		assert.equal(registryCategory("data/x/a.json"), undefined);
+		assert.equal(registryCategory("assets/x/a/b.json"), undefined);
+	});
+});
+
+describe("VanillaBaseline", () => {
+	const unknown = "Unknown key \u201cdirt_provider\u201d";
+	const vanilla = "data/minecraft/worldgen/configured_feature/oak.json";
+
+	it("matches a warning Mojang triggers anywhere in the same folder", () => {
+		const baseline = new VanillaBaseline();
+		baseline.addWarning(vanilla, unknown);
+		assert.equal(baseline.matches(vanilla, unknown), true);
+		assert.equal(baseline.matches("data/mine/worldgen/biome/x.json", unknown), true);
+	});
+
+	it("never matches a different message or folder", () => {
+		const baseline = new VanillaBaseline();
+		baseline.addWarning(vanilla, unknown);
+		assert.equal(baseline.matches(vanilla, "Unknown key \u201ctypo\u201d"), false);
+		assert.equal(baseline.matches("data/mine/loot_table/x.json", unknown), false);
+		assert.equal(baseline.matches("pack.mcmeta", unknown), false);
+		assert.equal(new VanillaBaseline().matches(vanilla, unknown), false);
 	});
 });

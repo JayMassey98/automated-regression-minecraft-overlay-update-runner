@@ -98,6 +98,26 @@ pack until that pack chooses to update.
 - **`tests/`**: Offline `unittest` suite and fake server helpers for ARMOUR's
   Python scripts.
 
+## Spyglass lint notes for snapshots
+
+`scripts/spyglass/lint.mjs` lints each flattened pack with Spyglass. Spyglass's
+schemas are versioned per *release*, so it checks every `26.4-snapshot-N`
+against the final 26.4 format even though Mojang changes formats between
+snapshots. A pack that matches exactly what the game accepts in a snapshot can
+therefore get "Unknown key" style warnings, and so does Mojang's own data.
+
+When a pack has warnings, `lint.mjs` also lints Mojang's own data for the same
+version (only the top-level folders, such as `worldgen`, that contain warnings).
+A pack warning that Mojang's data also triggers is printed as
+`NOTE: <file>:<line>:<col> <message>` (and a GitHub `notice` annotation) instead
+of a warning, with one explanatory `NOTE:` line first, and is counted separately
+(`0 errors, 0 warnings, 154 notes`). Notes never fail a run, even with
+`--fail-on warning`. Warnings that Mojang's data does not trigger, such as a key
+Mojang removed or a typo, stay warnings. The match is per folder and message,
+so a real mistake whose message is identical to one Mojang's data triggers in
+the same folder is also shown as a note. If the vanilla data cannot be checked,
+every warning stays a warning. Pass `--no-vanilla-baseline` to turn this off.
+
 ## Writing Tests
 
 Tests are plain data pack functions, so they need no mods and run on every
