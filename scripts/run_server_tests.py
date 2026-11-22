@@ -50,6 +50,7 @@ from armour_paths import (
     resolve_pack_root,
 )
 from build_version_pack import (
+    flatten_overlay_directories,
     load_mcmeta,
     main_transaction_lock,
     overlay_entries,
@@ -141,31 +142,14 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
         overlay_range(entry)
     validate_overlay_sources(repo, entries)
     reject_pack_symlinks(repo, [entry["directory"] for entry in entries])
-    # Minecraft overlay identifiers are flat names. Keep the source tree
-    # organised with nested folders, but publish a flat runtime folder and
-    # matching identifier by replacing path separators with underscores.
-    runtime_directories: set[str] = set()
-    staged_mcmeta = load_mcmeta(repo)
-    staged_entries = overlay_entries(staged_mcmeta)
-    for entry in staged_entries:
-        source_directory = entry["directory"]
-        runtime_directory = source_directory.replace("/", "_")
-        if runtime_directory in runtime_directories:
-            raise ArmourError(
-                "Overlay directory names collide after flattening: "
-                f"{source_directory!r} becomes {runtime_directory!r}"
-            )
-        runtime_directories.add(runtime_directory)
-        entry["directory"] = runtime_directory
+    staged_mcmeta, runtime_pairs = flatten_overlay_directories(load_mcmeta(repo))
 
     destination.mkdir(parents=True)
     (destination / "pack.mcmeta").write_text(
         json.dumps(staged_mcmeta, indent=2), encoding="utf-8"
     )
     shutil.copytree(repo / "data", destination / "data")
-    for source_entry, staged_entry in zip(entries, staged_entries, strict=True):
-        directory = source_entry["directory"]
-        runtime_directory = staged_entry["directory"]
+    for directory, runtime_directory in runtime_pairs:
         overlay_root = (repo / directory).resolve()
         if not overlay_root.is_relative_to(repo.resolve()):
             raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")

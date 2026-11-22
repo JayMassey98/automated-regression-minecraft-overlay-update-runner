@@ -91,6 +91,10 @@ pack until that pack chooses to update.
     overlays that apply to one Minecraft version (Spyglass ignores overlays).
   - **`generate_test_runner.py`**: Generates `harness/run_tests.mcfunction`
     from the test files, so adding a test is just adding a file.
+  - **`build_release_pack.py`**: Builds the zip players download. Nested
+    overlay folders such as `snapshot/26.3/1_to_2` become the flat names
+    Minecraft requires (`snapshot_26.3_1_to_2`) and `pack.mcmeta` is rewritten
+    to match, exactly as the server tests stage the pack.
   - **`get_minecraft_versions.py`**: Reads Mojang's version manifest and emits
     the version matrix (releases and snapshots to target).
   - **`run_server_tests.py`**: Stages the pack and tests into a world, runs

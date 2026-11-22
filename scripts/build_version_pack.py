@@ -26,6 +26,7 @@ Outputs the flattened pack plus a JSON map {flattened path: repo path}.
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib
 import io
 import json
@@ -224,6 +225,34 @@ def overlay_entries(mcmeta: Mapping[str, Any]) -> list[dict[str, Any]]:
             raise ArmourError(msg)
         validated.append(entry)
     return validated
+
+
+def flatten_overlay_directories(
+    mcmeta: Mapping[str, Any],
+) -> tuple[dict[str, Any], list[tuple[str, str]]]:
+    """Give every overlay a flat runtime directory name.
+
+    Minecraft overlay identifiers are flat names. The source tree can be
+    organised with nested folders such as `snapshot/26.3/1_to_2`, but the pack
+    Minecraft loads must use `snapshot_26.3_1_to_2`, so path separators become
+    underscores. Returns a copy of `mcmeta` with the renamed directories and the
+    `(source directory, runtime directory)` pairs in pack.mcmeta order.
+    """
+    flat = copy.deepcopy(dict(mcmeta))
+    pairs: list[tuple[str, str]] = []
+    seen: dict[str, str] = {}
+    for entry in overlay_entries(flat):
+        source = entry["directory"]
+        runtime = source.replace("/", "_")
+        if runtime in seen:
+            raise ArmourError(
+                "Overlay directory names collide after flattening: "
+                f"{source!r} becomes {runtime!r}"
+            )
+        seen[runtime] = source
+        entry["directory"] = runtime
+        pairs.append((source, runtime))
+    return flat, pairs
 
 
 def _reject_pack_symlinks(repo: Path) -> None:
