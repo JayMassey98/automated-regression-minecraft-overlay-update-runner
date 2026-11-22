@@ -316,7 +316,14 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     backup_created = False
     try:
         result = BuildResult(fmt=fmt)
-        shutil.copyfile(repo / "pack.mcmeta", temp / "pack.mcmeta")
+        # This output is already a single-version pack with overlays merged into
+        # data/. Keeping source overlay declarations would make Minecraft (and
+        # the server-test stager) try to load overlay directories a second time.
+        runtime_mcmeta = dict(mcmeta)
+        runtime_mcmeta.pop("overlays", None)
+        (temp / "pack.mcmeta").write_text(
+            json.dumps(runtime_mcmeta, indent=2) + "\\n", encoding="utf-8"
+        )
         if (repo / "spyglass.json").exists():
             shutil.copyfile(repo / "spyglass.json", temp / "spyglass.json")
         root_files = copy_data_tree(repo / "data", temp, source_root)
