@@ -214,6 +214,20 @@ class BuildTests(TempDirTestCase):
             "old/data/p/function/old.mcfunction",
         )
 
+    def test_pack_local_mcdoc_schemas_travel_with_the_pack(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        schema = "dispatch minecraft:density_function[lerp] to struct {}"
+        write(repo / "mcdoc/java/data/worldgen/density_function.mcdoc", schema)
+        self.assertIn(
+            "mcdoc/java/data/worldgen/density_function.mcdoc",
+            self.build(repo, (90, 0)),
+        )
+        self.assertEqual(
+            (self.tmp / "out/mcdoc/java/data/worldgen/density_function.mcdoc")
+            .read_text(encoding="utf-8"),
+            schema,
+        )
+
     def test_spyglass_json_travels_with_the_pack(self) -> None:
         repo = make_repo(self.tmp / "repo")
         write(repo / "spyglass.json", "{}")
