@@ -22,6 +22,17 @@ jobs:
           version: latest
           working-dir: .
       - run: biome check scripts/
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: scripts/spyglass/package-lock.json
+      - name: Install Spyglass test dependencies
+        working-directory: scripts/spyglass
+        run: npm ci --no-audit --no-fund --no-bin-links
+      - name: Test Spyglass lint helpers
+        working-directory: scripts/spyglass
+        run: npm test
       - uses: DavidAnson/markdownlint-cli2-action@v25
         with:
           globs: README.md
