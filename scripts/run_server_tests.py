@@ -428,7 +428,15 @@ def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> N
             "Couldn't load pack",
         )
         if any(marker in line for marker in fatal_pack_warning_markers):
-            found.load_errors.append(line)
+            # Minecraft often puts the metadata parse exception on the lines
+            # immediately following this warning. Preserve those details so CI
+            # tells us why the pack was rejected, not only that it was rejected.
+            detail = []
+            for following in lines[index + 1 : index + 1 + LOAD_ERROR_DETAIL_LINES]:
+                if LOG_RECORD_RE.match(following):
+                    break
+                detail.append(following.strip())
+            found.load_errors.append("\\n".join([line, *filter(None, detail)]))
         else:
             found.load_warnings.append(line)
         return
