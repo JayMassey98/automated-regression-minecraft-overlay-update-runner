@@ -325,7 +325,22 @@ class ReportTests(unittest.TestCase):
         found = run_server_tests.Analysis(result="PASSED", counts="2 passed")
         ok, printed = self.report(found)
         self.assertTrue(ok)
-        self.assertIn("Minecraft 1.21.11: 2 passed; result=PASSED", printed)
+        self.assertIn("Minecraft 1.21.11: 2 passed; 0 pack load errors", printed)
+        self.assertNotIn("result=PASSED", printed)
+        self.assertNotIn("0 failures", printed)
+
+    def test_failed_test_summary_omits_result_and_failure_count(self) -> None:
+        found = run_server_tests.Analysis(
+            result="FAILED", counts="1 passed 1 failed 0 skipped", fails=["x"]
+        )
+        ok, printed = self.report(found)
+        self.assertFalse(ok)
+        self.assertIn(
+            "Minecraft 1.21.11: 1 passed 1 failed 0 skipped; 0 pack load errors",
+            printed,
+        )
+        self.assertNotIn("result=FAILED", printed)
+        self.assertNotIn("1 failures", printed)
 
     def test_each_kind_of_problem_fails_the_run(self) -> None:
         cases = {

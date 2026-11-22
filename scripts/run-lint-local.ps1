@@ -1,4 +1,4 @@
-# Run the CI lint checks locally. With -Install, install or upgrade the tools first.
+# Run the CI lint checks locally. With -Install, install or upgrade the tools and submodules first.
 # rumdl is a local Markdown-lint substitute for CI's markdownlint-cli2, not the same tool.
 [CmdletBinding()]
 param(
@@ -51,6 +51,37 @@ function Invoke-InstallOrUpgrade {
         } else {
             Write-Host "Installed $($Package.Name)." -ForegroundColor Green
         }
+    }
+}
+
+function Sync-GitSubmodules {
+    param([switch]$PullLatest)
+
+    Write-Host ""
+    if ($PullLatest) {
+        Write-Host "===== Update Git submodules to latest remote =====" -ForegroundColor Cyan
+    } else {
+        Write-Host "===== Sync Git submodules to pinned commit =====" -ForegroundColor Cyan
+    }
+
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+        Write-Host "FAIL: Git is unavailable; cannot sync submodules." -ForegroundColor Red
+        $script:Failures++
+        return
+    }
+
+    if ($PullLatest) {
+        & git submodule update --init --recursive --remote --merge
+    } else {
+        & git submodule update --init --recursive
+    }
+
+    $result = $LASTEXITCODE
+    if ($result -ne 0) {
+        Write-Host "FAIL: Git submodule command failed (exit code $result)." -ForegroundColor Red
+        $script:Failures++
+    } else {
+        Write-Host "PASS: Git submodules synced." -ForegroundColor Green
     }
 }
 
@@ -126,13 +157,15 @@ try {
         Write-Host "Note: newly installed tools may not be visible to this PowerShell process if PATH changed. If a command is not found, reopen PowerShell and rerun without -Install." -ForegroundColor Yellow
     }
 
+    Sync-GitSubmodules -PullLatest:$Install
+    Set-PythonScriptExecutablePermissions
+
     Invoke-LintStep "GitHub Actions workflow lint" "actionlint" @(".github/workflows/self-test.yml")
     Invoke-LintStep "Biome scripts check" "biome" @("check", "scripts/")
     Write-Host "NOTE: rumdl is a local Markdown-lint substitute for CI markdownlint-cli2." -ForegroundColor Yellow
     Invoke-LintStep "Local Markdown lint (rumdl)" "rumdl" @("check", "README.md")
-    Set-PythonScriptExecutablePermissions
-    Invoke-LintStep "Ruff lint" "ruff" @("check", ".")
-    Invoke-LintStep "Ruff format verification" "ruff" @("format", "--check", ".")
+    Invoke-LintStep "Ruff lint" "ruff" @("check", "--fix", ".")
+    Invoke-LintStep "Ruff format" "ruff" @("format", ".")
 
     Write-Host ""
     if ($script:Failures -eq 0) {

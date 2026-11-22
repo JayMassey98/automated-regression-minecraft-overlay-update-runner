@@ -19,6 +19,7 @@ jobs:
       - uses: biomejs/setup-biome@v2.7.1
         with:
           version: latest
+          working-dir: .
       - run: biome check scripts/
       - uses: DavidAnson/markdownlint-cli2-action@v25
         with:
@@ -32,7 +33,7 @@ jobs:
           version: "latest"
           args: format --check
 
-  test:
+  unit_tests:
     strategy:
       fail-fast: false
       matrix:
@@ -40,9 +41,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.15"
       - run: python -m unittest discover -s tests -v
 
   discover_versions:
@@ -51,13 +52,14 @@ jobs:
       matrix: ${{ steps.versions.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: "3.15"
       - id: versions
         run: python scripts/get_minecraft_versions.py --release-from 1.21.9 --snapshot-after 26.3
 
-  server_integration:
+  integration_tests:
+    name: integration_tests (${{ matrix.id }})
     needs: discover_versions
     strategy:
       fail-fast: false
@@ -66,14 +68,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
-      - uses: actions/setup-java@v4
+          python-version: "3.15"
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: ${{ matrix.java }}
-      - name: Verify passing and deliberately failing tests on a real server
+      - name: Run tests on a real Minecraft server
+        id: server-tests
         shell: bash
         env:
           MINECRAFT_VERSION: ${{ matrix.id }}
@@ -90,14 +93,31 @@ jobs:
             --repo . \
             --pack-path tests/fixtures/server-pack \
             --tests-dir tests/fixtures/server-tests \
+            --suppress-failure-annotations \
             > "$RUNNER_TEMP/armour-server.log" 2>&1
           status=$?
           set -e
           cat "$RUNNER_TEMP/armour-server.log"
-          if [[ "$status" -ne 1 ]] || ! grep -Fq \
-            "passed=1 failed=1 skipped=0; result=FAILED; 1 failures; 0 pack load errors" \
-            "$RUNNER_TEMP/armour-server.log"; then
-            echo "The server did not report the expected one-pass/one-failure result."
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the expected test success is reported
+        shell: bash
+        run: |
+          if ! grep -Fq "passed=1 failed=1 skipped=0" "$RUNNER_TEMP/armour-server.log"; then
+            echo "The server did not report the expected test success."
             exit 1
           fi
-          echo "The server correctly reported one passing and one deliberately failing test."
+          echo "PASS: The expected test success was correctly reported."
+
+      - name: Verify the intentional test failure is detected
+        shell: bash
+        env:
+          SERVER_TEST_EXIT_CODE: ${{ steps.server-tests.outputs.exit_code }}
+        run: |
+          if [[ "$SERVER_TEST_EXIT_CODE" -ne 1 ]] || ! grep -Fq \
+            "passed=1 failed=1 skipped=0; 0 pack load errors" \
+            "$RUNNER_TEMP/armour-server.log"; then
+            echo "The server did not report the expected intentional failure."
+            exit 1
+          fi
+          echo "PASS: The intentional test failure was correctly detected."

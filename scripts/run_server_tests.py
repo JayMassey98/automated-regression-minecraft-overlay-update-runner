@@ -435,13 +435,14 @@ def analyse(lines: Sequence[str], pack_names: Sequence[str]) -> Analysis:
     return found
 
 
-def report(
+def report(  # noqa: PLR0913 - keyword-only reporting options
     version: str,
     found: Analysis,
     problem: str | None,
     lines: list[str],
     *,
     load_only: bool = False,
+    suppress_failure_annotations: bool = False,
 ) -> bool:
     """Print annotations and the summary; return True when everything passed.
 
@@ -453,8 +454,9 @@ def report(
         annotate("error", f"Pack failed to load ({version})", error)
     for error in found.errors:
         annotate("error", f"Test harness ({version})", error)
-    for failure in found.fails:
-        annotate("error", f"Test failed ({version})", failure)
+    if not suppress_failure_annotations:
+        for failure in found.fails:
+            annotate("error", f"Test failed ({version})", failure)
 
     ok = (
         problem is None
@@ -473,11 +475,15 @@ def report(
         annotate("error", f"Server test run ({version})", problem)
         print(f"---- last {LOG_TAIL_LINES} server log lines ----")
         print("\n".join(lines[-LOG_TAIL_LINES:]))
-    outcome = totals if load_only else f"{totals}; result={found.result}"
-    print(
-        f"Minecraft {version}: {outcome}; "
-        f"{len(found.fails)} failures; {len(found.load_errors)} pack load errors"
-    )
+    if load_only:
+        print(
+            f"Minecraft {version}: {totals}; "
+            f"{len(found.fails)} failures; {len(found.load_errors)} pack load errors"
+        )
+    else:
+        print(
+            f"Minecraft {version}: {totals}; {len(found.load_errors)} pack load errors"
+        )
     return ok
 
 
@@ -514,6 +520,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--tests-dir", default="tests")
+    parser.add_argument(
+        "--suppress-failure-annotations",
+        action="store_true",
+        help="record test failures without creating GitHub error annotations",
+    )
     parser.add_argument(
         "--load-only",
         action="store_true",
@@ -692,7 +703,14 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
             test_timeout=args.test_timeout,
         )
         found = analyse(lines, pack_names)
-        ok = report(args.version, found, problem, lines, load_only=args.load_only)
+        ok = report(
+            args.version,
+            found,
+            problem,
+            lines,
+            load_only=args.load_only,
+            suppress_failure_annotations=args.suppress_failure_annotations,
+        )
         return 0 if ok else 1
 
 
