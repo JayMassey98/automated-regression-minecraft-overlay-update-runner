@@ -141,11 +141,31 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
         overlay_range(entry)
     validate_overlay_sources(repo, entries)
     reject_pack_symlinks(repo, [entry["directory"] for entry in entries])
+    # Minecraft overlay identifiers are flat names. Keep the source tree
+    # organised with nested folders, but publish a flat runtime folder and
+    # matching identifier by replacing path separators with underscores.
+    runtime_directories: set[str] = set()
+    staged_mcmeta = load_mcmeta(repo)
+    staged_entries = overlay_entries(staged_mcmeta)
+    for entry in staged_entries:
+        source_directory = entry["directory"]
+        runtime_directory = source_directory.replace("/", "_")
+        if runtime_directory in runtime_directories:
+            raise ArmourError(
+                "Overlay directory names collide after flattening: "
+                f"{source_directory!r} becomes {runtime_directory!r}"
+            )
+        runtime_directories.add(runtime_directory)
+        entry["directory"] = runtime_directory
+
     destination.mkdir(parents=True)
-    shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
+    (destination / "pack.mcmeta").write_text(
+        json.dumps(staged_mcmeta, indent=2), encoding="utf-8"
+    )
     shutil.copytree(repo / "data", destination / "data")
-    for entry in entries:
-        directory = entry["directory"]
+    for source_entry, staged_entry in zip(entries, staged_entries, strict=True):
+        directory = source_entry["directory"]
+        runtime_directory = staged_entry["directory"]
         overlay_root = (repo / directory).resolve()
         if not overlay_root.is_relative_to(repo.resolve()):
             raise ArmourError(f"Overlay directory escapes the pack: {directory!r}")
@@ -155,7 +175,7 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
                 f"but {overlay_root} does not exist"
             )
             raise ArmourError(msg)
-        shutil.copytree(overlay_root, destination / directory)
+        shutil.copytree(overlay_root, destination / runtime_directory)
     if widen:
         widen_max_format(destination / "pack.mcmeta")
 
