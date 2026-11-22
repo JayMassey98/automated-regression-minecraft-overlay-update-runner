@@ -6,6 +6,7 @@ on:
   push:
     branches:
       - automated_testing
+      - issue_solve
 
 permissions:
   contents: read
