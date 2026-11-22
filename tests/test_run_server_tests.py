@@ -142,7 +142,9 @@ class StageDataPackTests(TempDirTestCase):
         nested.parent.mkdir(parents=True)
         source.rename(nested)
         source_mcmeta = json.loads((repo / "pack.mcmeta").read_text(encoding="utf-8"))
-        source_mcmeta["overlays"]["entries"][0]["directory"] = "snapshot/26.1/1_to_11"
+        source_mcmeta["overlays"]["entries"][0]["directory"] = (
+            "snapshot/26.1/1_to_11"
+        )
         (repo / "pack.mcmeta").write_text(json.dumps(source_mcmeta), encoding="utf-8")
 
         out = self.tmp / "out"
