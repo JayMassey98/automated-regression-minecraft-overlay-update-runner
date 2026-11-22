@@ -151,7 +151,9 @@ class StageDataPackTests(TempDirTestCase):
         run_server_tests.stage_data_pack(repo, out, widen=False)
 
         runtime_directory = "snapshot_26.1_1_to_11"
-        self.assertTrue((out / runtime_directory / "data/p/function/b.mcfunction").is_file())
+        self.assertTrue(
+            (out / runtime_directory / "data/p/function/b.mcfunction").is_file()
+        )
         self.assertFalse((out / "snapshot").exists())
         staged = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
         self.assertEqual(
