@@ -135,6 +135,32 @@ class StageDataPackTests(TempDirTestCase):
         mcmeta = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
         self.assertEqual(mcmeta["pack"]["max_format"], 94)
 
+    def test_nested_overlay_paths_are_flattened_in_the_staged_pack(self) -> None:
+        repo = self.make_repo()
+        source = repo / "ov"
+        nested = repo / "snapshot/26.1/1_to_11"
+        nested.parent.mkdir(parents=True)
+        source.rename(nested)
+        source_mcmeta = json.loads((repo / "pack.mcmeta").read_text(encoding="utf-8"))
+        source_mcmeta["overlays"]["entries"][0]["directory"] = "snapshot/26.1/1_to_11"
+        (repo / "pack.mcmeta").write_text(json.dumps(source_mcmeta), encoding="utf-8")
+
+        out = self.tmp / "out"
+        run_server_tests.stage_data_pack(repo, out, widen=False)
+
+        runtime_directory = "snapshot_26.1_1_to_11"
+        self.assertTrue((out / runtime_directory / "data/p/function/b.mcfunction").is_file())
+        self.assertFalse((out / "snapshot").exists())
+        staged = json.loads((out / "pack.mcmeta").read_text(encoding="utf-8"))
+        self.assertEqual(
+            staged["overlays"]["entries"][0]["directory"], runtime_directory
+        )
+        original = json.loads((repo / "pack.mcmeta").read_text(encoding="utf-8"))
+        self.assertEqual(
+            original["overlays"]["entries"][0]["directory"],
+            "snapshot/26.1/1_to_11",
+        )
+
     def test_snapshots_get_a_widened_max_format(self) -> None:
         out = self.tmp / "out"
         run_server_tests.stage_data_pack(self.make_repo(), out, widen=True)
