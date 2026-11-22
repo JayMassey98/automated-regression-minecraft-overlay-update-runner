@@ -322,7 +322,7 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
         runtime_mcmeta = dict(mcmeta)
         runtime_mcmeta.pop("overlays", None)
         (temp / "pack.mcmeta").write_text(
-            json.dumps(runtime_mcmeta, indent=2) + "\\n", encoding="utf-8"
+            json.dumps(runtime_mcmeta, indent=2) + "\n", encoding="utf-8"
         )
         if (repo / "spyglass.json").exists():
             shutil.copyfile(repo / "spyglass.json", temp / "spyglass.json")
