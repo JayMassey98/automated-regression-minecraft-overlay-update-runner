@@ -43,7 +43,12 @@ from armour_common import (
     download_server_jar,
     run,
 )
-from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
+from armour_paths import (
+    paths_overlap,
+    reject_pack_symlinks,
+    reject_symlink_components,
+    resolve_pack_root,
+)
 from build_version_pack import (
     load_mcmeta,
     main_transaction_lock,
@@ -135,7 +140,7 @@ def stage_data_pack(repo: Path, destination: Path, *, widen: bool) -> None:
     for entry in entries:
         overlay_range(entry)
     validate_overlay_sources(repo, entries)
-    _reject_symlinks(repo)
+    reject_pack_symlinks(repo, [entry["directory"] for entry in entries])
     destination.mkdir(parents=True)
     shutil.copyfile(repo / "pack.mcmeta", destination / "pack.mcmeta")
     shutil.copytree(repo / "data", destination / "data")
@@ -641,7 +646,6 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
         raise ArmourError(msg)
     if not args.load_only and not tests_dir.is_dir():
         raise ArmourError(f"Tests directory does not exist: {tests_dir}")
-    _reject_symlinks(pack_root)
     if not args.load_only:
         _reject_symlinks(tests_dir)
     if not (pack_root / "data").is_dir():
@@ -650,6 +654,7 @@ def main(argv: Sequence[str] | None = None) -> int:  # noqa: C901, PLR0912, PLR0
     for entry in entries:
         overlay_range(entry)
     validate_overlay_sources(pack_root, entries)
+    reject_pack_symlinks(pack_root, [entry["directory"] for entry in entries])
     if not args.load_only:
         validate_tests_inputs(tests_dir, config.tests_namespace)
     if server_jar is not None and not server_jar.is_file():

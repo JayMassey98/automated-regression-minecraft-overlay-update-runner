@@ -153,6 +153,29 @@ class StageDataPackTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "escapes the pack|Symbolic links"):
             run_server_tests.stage_data_pack(repo, self.tmp / "out", widen=False)
 
+    def test_symlinks_outside_the_pack_files_are_ignored(self) -> None:
+        repo = self.make_repo()
+        write(repo / "node_modules/real.js", "x")
+        try:
+            (repo / "node_modules/link.js").symlink_to(repo / "node_modules/real.js")
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        out = self.tmp / "out"
+        run_server_tests.stage_data_pack(repo, out, widen=False)
+        self.assertTrue((out / "data/p/function/a.mcfunction").is_file())
+        self.assertFalse((out / "node_modules").exists())
+
+    def test_data_symlinks_are_rejected(self) -> None:
+        repo = self.make_repo()
+        outside = self.tmp / "outside.mcfunction"
+        write(outside, "outside")
+        try:
+            (repo / "data/p/function/outside.mcfunction").symlink_to(outside)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            run_server_tests.stage_data_pack(repo, self.tmp / "out", widen=False)
+
     def test_missing_overlay_folder(self) -> None:
         repo = self.make_repo()
         for path in sorted(repo.joinpath("ov").rglob("*"), reverse=True):

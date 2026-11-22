@@ -6,8 +6,12 @@ import json
 import os
 import sys
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from armour_common import ArmourError
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 CONFIG_FILE = "armour.json"
 FORMAT_RANGE_LENGTH = 2
@@ -233,6 +237,28 @@ def resolve_pack_root(repo: Path, pack_path: str | None = None) -> Path:
         f"Found multiple data packs under {repo}: {locations}. "
         "Set pack_path in armour.json or pass --pack-path to select one."
     )
+
+
+def reject_pack_symlinks(pack_root: Path, overlay_directories: Iterable[str]) -> None:
+    """Reject symlinks in the files that make up the data pack.
+
+    Only `pack.mcmeta`, `data/` and the overlay folders are copied into the
+    staged or flattened pack, so only those are checked. The rest of the pack
+    root (a root-level pack shares its folder with `.git`, `.armour`, a
+    `node_modules` with `.bin` links, build output...) is never read and so
+    cannot leak anything outside the pack.
+    """
+    for name in ("pack.mcmeta", "data", *overlay_directories):
+        path = pack_root / name
+        if path.is_symlink():
+            msg = f"Symbolic links are not supported in data packs: {path}"
+            raise ArmourError(msg)
+        if not path.is_dir():
+            continue
+        for child in path.rglob("*"):
+            if child.is_symlink():
+                msg = f"Symbolic links are not supported in data packs: {child}"
+                raise ArmourError(msg)
 
 
 def reject_symlink_components(path: Path, base: Path) -> None:

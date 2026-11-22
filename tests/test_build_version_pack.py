@@ -260,6 +260,32 @@ class BuildTests(TempDirTestCase):
         with self.assertRaisesRegex(ArmourError, "Symbolic links"):
             build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
 
+    def test_symlinks_outside_the_pack_files_are_ignored(self) -> None:
+        # A root-level pack shares its folder with tooling such as
+        # `.armour/.../node_modules/.bin`, which holds symlinks and is never read.
+        repo = make_repo(self.tmp / "repo")
+        write(repo / ".armour/node_modules/real.js", "x")
+        try:
+            (repo / ".armour/node_modules/link.js").symlink_to(
+                repo / ".armour/node_modules/real.js"
+            )
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
+        self.assertTrue((self.tmp / "out/data/p/function/root.mcfunction").is_file())
+        self.assertFalse((self.tmp / "out/.armour").exists())
+
+    def test_overlay_symlinks_are_rejected(self) -> None:
+        repo = make_repo(self.tmp / "repo")
+        outside = self.tmp / "outside.mcfunction"
+        write(outside, "outside")
+        try:
+            (repo / "new/data/p/function/outside.mcfunction").symlink_to(outside)
+        except OSError:
+            self.skipTest("symlinks are unavailable")
+        with self.assertRaisesRegex(ArmourError, "Symbolic links"):
+            build_version_pack.build_flattened_pack(repo, self.tmp / "out", (90, 0))
+
     def test_backup_rename_failure_preserves_previous_output(self) -> None:
         repo = make_repo(self.tmp / "repo")
         out = self.tmp / "out"

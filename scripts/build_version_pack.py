@@ -43,7 +43,12 @@ from armour_common import (
     download_server_jar,
     run,
 )
-from armour_paths import paths_overlap, reject_symlink_components, resolve_pack_root
+from armour_paths import (
+    paths_overlap,
+    reject_pack_symlinks,
+    reject_symlink_components,
+    resolve_pack_root,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
@@ -274,7 +279,7 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     entries = overlay_entries(mcmeta)
     for entry in entries:
         overlay_range(entry)
-    _reject_pack_symlinks(repo)
+    reject_pack_symlinks(repo, [entry["directory"] for entry in entries])
     validate_overlay_sources(repo, entries)
     source_root = (source_root or repo).resolve()
     repo = repo.resolve()
