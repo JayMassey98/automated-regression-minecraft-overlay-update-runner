@@ -225,6 +225,26 @@ class AnalyseTests(unittest.TestCase):
             [lines[0] + "\n" + "Unknown command at position 4"],
         )
 
+    def test_fatal_pack_metadata_warning_includes_exception_details(self) -> None:
+        lines = [
+            "[12:00:00] [Server thread/WARN]: Failed to read pack file/demo metadata",
+            "com.google.gson.JsonParseException: Invalid metadata field",
+            "    at net.minecraft.Pack.read(Pack.java:1)",
+            "[12:00:01] [Server thread/WARN]: Missing data pack file/demo",
+        ]
+        found = run_server_tests.analyse(lines, ("demo",))
+        self.assertEqual(
+            found.load_errors,
+            [
+                lines[0]
+                + "\\n"
+                + "com.google.gson.JsonParseException: Invalid metadata field"
+                + "\\n"
+                + "at net.minecraft.Pack.read(Pack.java:1)",
+                lines[3],
+            ],
+        )
+
     def test_warnings_and_fatal(self) -> None:
         lines = [
             "[12:00:00] [Server thread/WARN]: demo is odd",
