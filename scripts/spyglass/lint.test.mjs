@@ -8,6 +8,7 @@ import {
 	escapeProperty,
 	LintLogger,
 	parseArgs,
+	registerSnapshotDensityFunctionTypes,
 	UsageError,
 	undeclaredSymbolRules,
 } from "./lint.mjs";
@@ -125,6 +126,78 @@ describe("LintLogger", () => {
 	it("works when its methods are detached", () => {
 		const { info } = new LintLogger("1");
 		assert.doesNotThrow(() => info("anything"));
+	});
+});
+
+describe("registerSnapshotDensityFunctionTypes", () => {
+	it("adds only the two missing registry IDs for the affected snapshots", () => {
+		let registration;
+		registerSnapshotDensityFunctionTypes({
+			config: { env: { gameVersion: "26.3-snapshot-2" } },
+			meta: {
+				registerSymbolRegistrar: (name, value) => {
+					registration = { name, ...value };
+				},
+			},
+		});
+		assert.equal(registration.name, "snapshot-density-function-types");
+		const added = [];
+		registration.registrar({
+			query: (uri, category, id) => ({
+				symbol: undefined,
+				enter: (value) => added.push({ uri, category, id, value }),
+			}),
+		});
+		assert.deepEqual(
+			added.map(({ uri, category, id }) => ({ uri, category, id })),
+			[
+				{
+					uri: "mcmeta://summary/registries.json",
+					category: "worldgen/density_function_type",
+					id: "minecraft:lerp",
+				},
+				{
+					uri: "mcmeta://summary/registries.json",
+					category: "worldgen/density_function_type",
+					id: "minecraft:gradient",
+				},
+			],
+		);
+	});
+
+	it("does not add symbols for other versions", () => {
+		let registered = false;
+		registerSnapshotDensityFunctionTypes({
+			config: { env: { gameVersion: "26.3-snapshot-4" } },
+			meta: {
+				registerSymbolRegistrar: () => {
+					registered = true;
+				},
+			},
+		});
+		assert.equal(registered, false);
+	});
+
+	it("does not duplicate registry symbols already present", () => {
+		let registration;
+		registerSnapshotDensityFunctionTypes({
+			config: { env: { gameVersion: "26.3-snapshot-1" } },
+			meta: {
+				registerSymbolRegistrar: (name, value) => {
+					registration = { name, ...value };
+				},
+			},
+		});
+		let additions = 0;
+		registration.registrar({
+			query: () => ({
+				symbol: {},
+				enter: () => {
+					additions++;
+				},
+			}),
+		});
+		assert.equal(additions, 0);
 	});
 });
 
