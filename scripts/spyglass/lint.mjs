@@ -243,6 +243,37 @@ export function undeclaredSymbolRules(allowUndeclared) {
 }
 
 /**
+ * Spyglass's registry summary omitted the two density-function types that
+ * Minecraft added in the first 26.3 snapshots. Add only those exact vanilla
+ * IDs for those versions; keep undeclared-symbol checking strict everywhere.
+ */
+export function registerSnapshotDensityFunctionTypes(ctx) {
+	const affectedVersions = new Set([
+		"26.3-snapshot-1",
+		"26.3-snapshot-2",
+		"26.3-snapshot-3",
+	]);
+	if (!affectedVersions.has(ctx.config.env.gameVersion)) {
+		return;
+	}
+	ctx.meta.registerSymbolRegistrar("snapshot-density-function-types", {
+		checksum: "26.3-snapshot-1-3-v1",
+		registrar: (symbols) => {
+			for (const id of ["minecraft:lerp", "minecraft:gradient"]) {
+				const query = symbols.query(
+					"mcmeta://summary/registries.json",
+					"worldgen/density_function_type",
+					id,
+				);
+				if (!query.symbol) {
+					query.enter({ usage: { type: "declaration" } });
+				}
+			}
+		},
+	});
+}
+
+/**
  * Start Spyglass on the pack and analyse it. Failures are recorded on the
  * logger instead of being thrown, so every one of them is reported together.
  * @returns {Promise<{analysis?: {analyzedFiles: number},
@@ -268,7 +299,11 @@ async function analysePack({ args, rootUri, cacheRoot, externals, logger }) {
 				}),
 				cacheRoot,
 				externals,
-				initializers: [mcdoc.initialize, je.initialize],
+				initializers: [
+					mcdoc.initialize,
+					je.initialize,
+					registerSnapshotDensityFunctionTypes,
+				],
 				projectRoots: [rootUri],
 			},
 		});
