@@ -279,7 +279,7 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
     entries = overlay_entries(mcmeta)
     for entry in entries:
         overlay_range(entry)
-    reject_pack_symlinks(repo, ["mcdoc", *(entry["directory"] for entry in entries)])
+    reject_pack_symlinks(repo, [entry["directory"] for entry in entries])
     validate_overlay_sources(repo, entries)
     source_root = (source_root or repo).resolve()
     repo = repo.resolve()
@@ -319,8 +319,6 @@ def build_flattened_pack(  # noqa: C901, PLR0912, PLR0915
         shutil.copyfile(repo / "pack.mcmeta", temp / "pack.mcmeta")
         if (repo / "spyglass.json").exists():
             shutil.copyfile(repo / "spyglass.json", temp / "spyglass.json")
-        if (repo / "mcdoc").is_dir():
-            shutil.copytree(repo / "mcdoc", temp / "mcdoc")
         root_files = copy_data_tree(repo / "data", temp, source_root)
         result.source_map.update(root_files)
         result.applied.append(f"data/ ({len(root_files)} files)")
