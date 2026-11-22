@@ -237,9 +237,9 @@ class AnalyseTests(unittest.TestCase):
             found.load_errors,
             [
                 lines[0]
-                + "\\n"
+                + "\n"
                 + "com.google.gson.JsonParseException: Invalid metadata field"
-                + "\\n"
+                + "\n"
                 + "at net.minecraft.Pack.read(Pack.java:1)",
                 lines[3],
             ],
