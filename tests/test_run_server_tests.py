@@ -313,6 +313,11 @@ class RunTestsOnServerTests(TempDirTestCase):
         # The fake server only reports a result when it is told to start tests.
         self.assertFalse(any("ARMOUR_RESULT" in line for line in lines))
 
+    def test_load_only_run_lists_enabled_datapacks(self) -> None:
+        lines, problem = self.run_mode("passes", start_command=None)
+        self.assertIsNone(problem)
+        self.assertTrue(any("There are 3 data packs enabled" in line for line in lines))
+
     def test_load_only_run_does_not_wait_for_a_result(self) -> None:
         _, problem = self.run_mode("silent", start_command=None, test=0.3)
         self.assertIsNone(problem)
