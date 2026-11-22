@@ -598,7 +598,7 @@ function reportDiagnostics(
 				annotation(
 					"notice",
 					`NOTE: Spyglass (${args.gameVersion})`,
-					`${error.message}. NOTE: Mojang's own ${args.gameVersion} data triggers the same warning (Spyglass schemas are versioned per release, not per snapshot), so this is not a problem with the pack.`,
+					`${error.message} (NOTE: Spyglass snapshot schema lag; Mojang's own ${args.gameVersion} data triggers it too)`,
 					location,
 				),
 			);
@@ -753,5 +753,11 @@ if (
 	process.argv[1] &&
 	import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href
 ) {
-	process.exit(await main());
+	const exitCode = await main();
+	// process.exit() can cut off output that is still queued when stdout is a
+	// pipe (as in CI), so wait until everything printed has been written.
+	for (const stream of [process.stdout, process.stderr]) {
+		await new Promise((resolve) => stream.write("", resolve));
+	}
+	process.exit(exitCode);
 }
