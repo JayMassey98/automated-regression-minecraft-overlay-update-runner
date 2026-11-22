@@ -343,6 +343,11 @@ def run_tests_on_server(
                     # Show which data packs the server has enabled, to help diagnose.
                     server.send("datapack list")
                     server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
+            if start_command is None:
+                # A clean server startup is not enough: verify pack discovery
+                # and expose the enabled list in the load-only job log.
+                server.send("datapack list")
+                server.wait_for(None, DIAGNOSTIC_PAUSE_SECONDS, lines)
             # Give the log a moment to flush anything printed after the result
             # (or, with no tests, after the server finished starting).
             server.wait_for(None, FLUSH_PAUSE_SECONDS, lines)
