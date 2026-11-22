@@ -436,7 +436,7 @@ def _record_pack_problem(found: Analysis, lines: Sequence[str], index: int) -> N
                 if LOG_RECORD_RE.match(following):
                     break
                 detail.append(following.strip())
-            found.load_errors.append("\\n".join([line, *filter(None, detail)]))
+            found.load_errors.append("\n".join([line, *filter(None, detail)]))
         else:
             found.load_warnings.append(line)
         return
