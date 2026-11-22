@@ -190,6 +190,11 @@ class BuildTests(TempDirTestCase):
                 "pack.mcmeta",
             ],
         )
+        runtime_mcmeta = json.loads(
+            (self.tmp / "out/pack.mcmeta").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("overlays", runtime_mcmeta)
+        self.assertIn("pack", runtime_mcmeta)
 
     def test_later_overlays_overwrite_earlier_files(self) -> None:
         repo = make_repo(
