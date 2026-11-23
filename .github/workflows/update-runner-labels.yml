@@ -1,0 +1,65 @@
+name: Update runner OS labels
+
+on:
+  schedule:
+    - cron: "23 9 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-runner-labels:
+    name: Check for newer stable runner labels
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Discover and update runner labels
+        run: python3 scripts/update_runner_labels.py
+
+      - name: Open or update pull request
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER_UPDATE_TOKEN }}
+          UPDATE_BRANCH: automation/update-runner-labels
+          BASE_BRANCH: automated_testing
+        shell: bash
+        run: |
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo "::error::Create the RUNNER_UPDATE_TOKEN repository secret. See the workflow setup notes."
+            exit 1
+          fi
+
+          if git diff --quiet -- .github/workflows/self-test.yml; then
+            echo "No runner-label update is needed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          gh auth setup-git
+
+          git switch --create "$UPDATE_BRANCH"
+          git add .github/workflows/self-test.yml
+          git commit -m "ci: update GitHub-hosted runner labels"
+          git push --force origin "$UPDATE_BRANCH"
+
+          if gh pr view "$UPDATE_BRANCH" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh pr edit "$UPDATE_BRANCH" \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$BASE_BRANCH" \
+              --title "ci: update GitHub-hosted runner labels" \
+              --body "Updates the pinned unit-test OS labels to the newest stable labels published by GitHub. Please review the diff and CI results before merging."
+          else
+            gh pr create \
+              --repo "$GITHUB_REPOSITORY" \
+              --base "$BASE_BRANCH" \
+              --head "$UPDATE_BRANCH" \
+              --title "ci: update GitHub-hosted runner labels" \
+              --body "Updates the pinned unit-test OS labels to the newest stable labels published by GitHub. Please review the diff and CI results before merging."
+          fi
