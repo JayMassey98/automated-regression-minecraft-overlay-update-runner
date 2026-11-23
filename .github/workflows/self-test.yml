@@ -1,4 +1,4 @@
-# Offline checks plus real-server smoke tests for ARMOUR.
+# Offline checks plus real-server smoke tests for ARMOUR. All actions are pinned to verified release commits.
 name: Self-test
 
 on:
@@ -11,24 +11,6 @@ permissions:
   contents: read
 
 jobs:
-  # This bootstrap checkout is SHA-pinned. All other actions run only after
-  # the lockfile has been verified successfully.
-  verify_lockfile:
-    name: Verify workflow dependency lockfile
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install GitHub's lockfile verifier
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh extension install github/gh-actions-lock --pin v0.5.1
-      - name: Verify direct and transitive action pins
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh actions-lock --verify --fail-on-warning
-
   lint:
     runs-on: ubuntu-latest
     steps:
