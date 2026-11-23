@@ -1,0 +1,56 @@
+# Only approve and queue Dependabot's grouped minor/patch PRs after
+# the complete Self-test workflow has finished successfully.
+name: Dependabot auto-merge
+
+on:
+  workflow_run:
+    workflows:
+      - Self-test
+    types:
+      - completed
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  approve-and-merge:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find the Dependabot minor/patch PR for the tested commit
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          pr_json="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/pulls" \
+            --jq '[.[] | select(
+              .state == "open"
+              and .user.login == "dependabot[bot]"
+              and (.title | startswith("Bump the minor-and-patch group with "))
+            )][0] // empty')"
+
+          if [[ -z "$pr_json" ]]; then
+            echo "No eligible Dependabot minor/patch group PR for this successful Self-test run."
+            exit 0
+          fi
+
+          pr_number="$(jq -r '.number' <<< "$pr_json")"
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Approve the tested Dependabot PR
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr review "$PR_NUMBER" --approve --repo "$GITHUB_REPOSITORY"
+
+      - name: Enable squash auto-merge
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: gh pr merge "$PR_NUMBER" --auto --squash --repo "$GITHUB_REPOSITORY"
