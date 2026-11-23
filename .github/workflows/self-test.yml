@@ -22,9 +22,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh actions-lock --verify
-      - name: Report missing workflow action lockfile
-        if: hashFiles('.github/workflows/actions.lock') == ''
-        run: echo "Action lockfile not bootstrapped yet; run the Update action lockfile workflow."
       - uses: raven-actions/actionlint@v2.2.0
       - uses: biomejs/setup-biome@v2.7.1
         with:
