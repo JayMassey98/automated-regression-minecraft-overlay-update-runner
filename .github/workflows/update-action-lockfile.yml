@@ -1,0 +1,37 @@
+# Generate the GitHub Actions dependency lockfile on demand.
+# Run this workflow after changing workflow action references.
+name: Update action lockfile
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-lockfile:
+    if: github.ref == 'refs/heads/automated_testing'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+      - name: Install gh-actions-lock
+        run: gh extension install github/gh-actions-lock --pin v0.5.1
+      - name: Generate and verify the lockfile
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh actions-lock
+          gh actions-lock --verify
+      - name: Commit lockfile changes
+        run: |
+          if git diff --quiet -- .github/workflows/actions.lock; then
+            echo "The action lockfile is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/actions.lock
+          git commit -m "chore: update GitHub Actions lockfile"
+          git push
