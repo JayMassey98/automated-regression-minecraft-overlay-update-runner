@@ -3,6 +3,9 @@
 name: Update action lockfile
 
 on:
+  push:
+    branches:
+      - automated_testing
   workflow_dispatch:
 
 permissions:
