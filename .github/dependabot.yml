@@ -1,0 +1,29 @@
+version: 2
+
+updates:
+  # Exact release tags in workflows are resolved to immutable commits by
+  # .github/workflows/actions.lock. Dependabot refreshes both in one PR.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  # Spyglass dependencies and package-lock.json live in this subdirectory.
+  - package-ecosystem: npm
+    directory: /scripts/spyglass
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+    groups:
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
