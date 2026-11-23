@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Repository and data-pack path discovery shared by ARMOUR entry points."""
 
 from __future__ import annotations

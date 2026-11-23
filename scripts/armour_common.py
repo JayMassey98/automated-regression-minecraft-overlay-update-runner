@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Helpers shared by ARMOUR's scripts.
 
 * `ArmourError` and `run`: one way for every script to report a failure.

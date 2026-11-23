@@ -1,4 +1,4 @@
-# /usr/bin/env python3
+#!/usr/bin/env python3
 """Build the data pack zip that players download.
 
 The source repository can keep overlays in nested folders such as

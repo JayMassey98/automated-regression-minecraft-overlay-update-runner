@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Per-repository settings for ARMOUR.
 
 Each data pack that uses ARMOUR keeps an `armour.json` in its repository root:
