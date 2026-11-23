@@ -18,7 +18,11 @@ jobs:
       - name: Install gh-actions-lock
         run: gh extension install github/gh-actions-lock --pin v0.5.1
       - name: Verify workflow action lockfile
+        if: hashFiles('.github/workflows/actions.lock') != ''
         run: gh actions-lock --verify
+      - name: Report missing workflow action lockfile
+        if: hashFiles('.github/workflows/actions.lock') == ''
+        run: echo "Action lockfile not bootstrapped yet; run the Update action lockfile workflow."
       - uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
       - uses: biomejs/setup-biome@4c91541eaada48f67d7dbd7833600ce162b68f51 # v2.7.1
         with:
